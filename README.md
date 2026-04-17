@@ -57,7 +57,7 @@ new take (fresh timestamp, no collisions).
 
 ```
 OUTPUT      [path]                [Choose folder…] [×]
-[ File | Generic ]
+[ File | Editor ]
 
 PROJECT FOLDER
 [Pick folder…]  [path]
@@ -111,13 +111,18 @@ to grant the tool permission on a project folder. The tool then:
 
 Chrome / Edge only (File System Access API).
 
-### Generic mode
+### Editor mode
 
-Paste any p5 sketch into the textarea. The pasted code is wrapped in a
-synthetic `File` and flows through the same iframe runner. No project
-folder, no libs — useful for testing snippets. Output goes to the
-separate **Output** folder at the top of the panel (or Downloads if
-unset).
+Paste a public `editor.p5js.org` sketch URL, click **Fetch zip** —
+the browser downloads the project as a `.zip` via the editor's own
+`Content-Disposition: attachment` endpoint (no CORS proxy needed,
+kicked off as a user-gesture navigation). Drag the downloaded zip into
+the drop zone and the runner unpacks it in-memory (via `fflate`),
+detects the main `.js`, and loads it like a File-mode project. You can
+also skip the URL and drop a zip you exported yourself via the
+editor's **File → Download**. Runtime `loadImage` / `loadJSON` / etc.
+calls resolve through an injected path→blob-URL map, so assets inside
+the zip work without rewriting the sketch.
 
 ## Profiles
 

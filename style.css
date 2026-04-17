@@ -337,6 +337,61 @@ textarea {
   font-size: 0.8rem;
 }
 
+.editor-drop {
+  border: 1px dashed var(--border);
+  padding: var(--space-sm);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.editor-drop p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.editor-drop p + p {
+  margin-top: 4px;
+}
+
+.editor-drop:hover,
+.editor-drop.drag-over,
+.editor-drop.flash {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.editor-drop.flash {
+  animation: dropFlash 2s ease-out;
+}
+
+@keyframes dropFlash {
+  0%   { background: var(--accent); color: var(--bg); }
+  100% { background: var(--accent-light); color: var(--accent); }
+}
+
+.editor-drop.drag-over p,
+.editor-drop:hover p {
+  color: var(--accent);
+}
+
+.editor-hint {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 0.75rem !important;
+  color: var(--text-dim) !important;
+}
+
+.editor-drop code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 1px 4px;
+  background: var(--bg-surface);
+}
+
 input[type='file'] {
   padding: 0.4rem;
   cursor: pointer;

@@ -24,6 +24,97 @@
       var timePatchInstalled = false;
       var origMillis = null;
 
+      // Assets map (path -> blob URL) is set by the bundle script that runs
+      // right before this bridge. Used to resolve runtime loadImage/loadJSON
+      // calls which otherwise would hit the iframe's blob-URL base and miss.
+      var assets = window.__p5exportAssets || {};
+      var assetBase = window.__p5exportBase || '';
+
+      function resolveAssetPath(input) {
+        if (typeof input !== 'string') return input;
+        if (/^(?:https?:|data:|blob:|file:|\\/\\/)/i.test(input)) return input;
+        var p = input.replace(/^\\.\\//, '');
+        if (assets[p]) return assets[p];
+        if (assets[assetBase + p]) return assets[assetBase + p];
+        // Also try matching by basename if the sketch used an unexpected
+        // prefix (e.g. '../assets/x.png' when it should be 'assets/x.png').
+        var base = p.split('/').pop();
+        for (var k in assets) {
+          if (k.split('/').pop() === base) return assets[k];
+        }
+        return input;
+      }
+
+      // Intercept fetch + XHR so any network-ish asset fetch resolves
+      // through our map. Must install before p5 or any sketch code runs.
+      var origFetch = window.fetch;
+      if (typeof origFetch === 'function') {
+        window.fetch = function (input, init) {
+          if (typeof input === 'string') input = resolveAssetPath(input);
+          else if (input && typeof input.url === 'string') {
+            var resolved = resolveAssetPath(input.url);
+            if (resolved !== input.url) input = new Request(resolved, input);
+          }
+          return origFetch.call(window, input, init);
+        };
+      }
+      if (window.XMLHttpRequest && XMLHttpRequest.prototype.open) {
+        var origOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method, url) {
+          var resolved = typeof url === 'string' ? resolveAssetPath(url) : url;
+          var rest = Array.prototype.slice.call(arguments, 2);
+          return origOpen.apply(this, [method, resolved].concat(rest));
+        };
+      }
+
+      // Patch p5's loader methods so the first argument (path) is resolved
+      // through the assets map before the original loader runs.
+      function patchLoaders(p5cls) {
+        if (!p5cls || !p5cls.prototype) return false;
+        var fns = [
+          'loadImage','loadSound','loadJSON','loadStrings',
+          'loadBytes','loadTable','loadXML','loadFont',
+          'loadModel','loadShader'
+        ];
+        fns.forEach(function (fn) {
+          var orig = p5cls.prototype[fn];
+          if (typeof orig !== 'function' || orig.__p5exportWrapped) return;
+          var wrapped = function (path) {
+            var rest = Array.prototype.slice.call(arguments, 1);
+            return orig.apply(this, [resolveAssetPath(path)].concat(rest));
+          };
+          wrapped.__p5exportWrapped = true;
+          p5cls.prototype[fn] = wrapped;
+        });
+        return true;
+      }
+      // Intercept p5 at the moment it's defined on window so the patch lands
+      // before the auto-instance runs preload(). A 10ms poll is too slow:
+      // p5 instantiation happens synchronously at script-load-end.
+      (function () {
+        if (typeof window.p5 !== 'undefined') {
+          patchLoaders(window.p5);
+          return;
+        }
+        var _p5 = undefined;
+        try {
+          Object.defineProperty(window, 'p5', {
+            configurable: true,
+            get: function () { return _p5; },
+            set: function (v) { _p5 = v; patchLoaders(v); },
+          });
+        } catch (e) {
+          // Fallback: poll.
+          var poll = setInterval(function () {
+            if (typeof window.p5 !== 'undefined') {
+              clearInterval(poll);
+              patchLoaders(window.p5);
+            }
+          }, 5);
+          setTimeout(function () { clearInterval(poll); }, 3000);
+        }
+      })();
+
       // Swap p5's wall-clock time source for a frame-deterministic one while
       // recording, so sketches that use t = millis() / 1000 advance in lockstep
       // with the captured MP4 regardless of renderFps. Reverts to real time
@@ -92,14 +183,34 @@
         clearInterval(p5Poll);
         mode = 'p5';
         patchTime();
-        p5.prototype.registerMethod('post', function () {
+        var hook = function () {
           if (pendingFps != null && typeof frameRate === 'function') {
             frameRate(pendingFps);
             pendingFps = null;
           }
           sendReady();
           parent.postMessage({ type: 'p5export:postdraw' }, '*');
-        });
+        };
+        p5.prototype.registerMethod('post', hook);
+        // p5 auto-instance snapshots _registeredMethods at construction;
+        // if it already ran before we got here (common in global mode),
+        // our prototype push misses it — patch the live instance too.
+        function attachToInstance() {
+          var inst = p5.instance;
+          if (!inst) return false;
+          if (!inst._registeredMethods) inst._registeredMethods = {};
+          if (!inst._registeredMethods.post) inst._registeredMethods.post = [];
+          if (inst._registeredMethods.post.indexOf(hook) === -1) {
+            inst._registeredMethods.post.push(hook);
+          }
+          return true;
+        }
+        if (!attachToInstance()) {
+          var instPoll = setInterval(function () {
+            if (attachToInstance()) clearInterval(instPoll);
+          }, 10);
+          setTimeout(function () { clearInterval(instPoll); }, 3000);
+        }
       }, 10);
 
       // Fallback: if p5 never surfaces (raw canvas / three.js / late load),
@@ -183,11 +294,31 @@
       doc.body.appendChild(main);
     }
 
+    // Derive a project-root prefix from the shared first path segment so
+    // relative paths in the sketch ('moon.png') can resolve to the zip
+    // entry ('demo/moon.png') via the assets map.
+    const firstSeg = files.length ? files[0].webkitRelativePath.split('/')[0] : '';
+    const sharedRoot = files.every(
+      (f) => f.webkitRelativePath.split('/')[0] === firstSeg &&
+             f.webkitRelativePath.includes('/'),
+    );
+    const projectBase = sharedRoot && firstSeg ? firstSeg + '/' : '';
+    const assetMap = Object.fromEntries(pathToURL);
+
+    const assets = doc.createElement('script');
+    assets.textContent =
+      'window.__p5exportAssets = ' + JSON.stringify(assetMap) + ';\n' +
+      'window.__p5exportBase = ' + JSON.stringify(projectBase) + ';';
+
     const bridge = doc.createElement('script');
     bridge.textContent = BRIDGE_SRC;
+
+    // Insert assets script first, bridge second (bridge reads those globals).
     if (doc.head.firstChild) {
       doc.head.insertBefore(bridge, doc.head.firstChild);
+      doc.head.insertBefore(assets, doc.head.firstChild);
     } else {
+      doc.head.appendChild(assets);
       doc.head.appendChild(bridge);
     }
 
