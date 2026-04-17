@@ -43,6 +43,7 @@
       <div class="modeswitch" role="tablist">
         <button class="mode active" data-mode="file" role="tab">File</button>
         <button class="mode" data-mode="generic" role="tab">Generic</button>
+        <button class="mode" data-mode="editor" role="tab">Editor</button>
       </div>
 
       <div class="mode-body" id="file-body">
@@ -67,6 +68,18 @@
           <textarea id="generic-code" spellcheck="false" placeholder="function setup() { createCanvas(1080, 1080); }
 function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
         </label>
+      </div>
+
+      <div class="mode-body hidden" id="editor-body">
+        <label>p5 editor URL (reference)
+          <input id="editor-url" type="url" placeholder="https://editor.p5js.org/USER/sketches/ID" />
+        </label>
+        <div class="editor-drop" id="editor-drop">
+          <p>Drop the project <code>.zip</code> here<br />or click to pick</p>
+          <p class="editor-hint">Export from the editor: <strong>File → Download</strong></p>
+          <input id="editor-file" type="file" accept=".zip" hidden />
+        </div>
+        <div id="editor-selected" class="selected hidden"></div>
       </div>
 
       <div class="grid">
@@ -182,6 +195,7 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
         modeButtons.forEach((b) => b.classList.toggle('active', b === btn));
         $('file-body').classList.toggle('hidden', mode !== 'file');
         $('generic-body').classList.toggle('hidden', mode !== 'generic');
+        $('editor-body').classList.toggle('hidden', mode !== 'editor');
       });
     });
 
@@ -369,6 +383,139 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
     }
 
     refreshRecentChips();
+
+    // ---- Editor mode (p5.js web editor ZIP drop) ---------------------------
+
+    const editorState = {
+      files: [],
+      mainFile: null,
+      projectName: null,
+    };
+
+    let _fflatePromise = null;
+    function loadFflate() {
+      if (!_fflatePromise) {
+        _fflatePromise = import('https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js');
+      }
+      return _fflatePromise;
+    }
+
+    function setEditorSelected(msg) {
+      const box = $('editor-selected');
+      if (!msg) {
+        box.textContent = '';
+        box.classList.add('hidden');
+        return;
+      }
+      box.textContent = msg;
+      box.classList.remove('hidden');
+    }
+
+    // Prefer sketch.js / script.js at the shallowest depth, else the
+    // shallowest .js that isn't in libraries/.
+    function pickEditorMain(files) {
+      const js = files.filter((f) => /\.js$/i.test(f.webkitRelativePath));
+      if (!js.length) return null;
+      const depth = (f) => f.webkitRelativePath.split('/').length;
+      js.sort((a, b) =>
+        depth(a) - depth(b) ||
+        a.webkitRelativePath.localeCompare(b.webkitRelativePath),
+      );
+      const named = js.find((f) =>
+        /(?:^|\/)(?:sketch|script)\.js$/i.test(f.webkitRelativePath),
+      );
+      if (named) return named;
+      const notLib = js.find((f) =>
+        !/(?:^|\/)libraries\//i.test(f.webkitRelativePath),
+      );
+      return notLib || js[0];
+    }
+
+    async function handleEditorZip(zipBlob, suggestedName) {
+      setEditorSelected('Unzipping…');
+      const { unzip } = await loadFflate();
+      const buffer = new Uint8Array(await zipBlob.arrayBuffer());
+      const entries = await new Promise((res, rej) =>
+        unzip(buffer, (err, out) => (err ? rej(err) : res(out))),
+      );
+
+      const paths = Object.keys(entries).filter((p) => !p.endsWith('/'));
+      if (!paths.length) throw new Error('Zip contained no files.');
+
+      // If every entry lives under the same top-level folder, strip that
+      // prefix and use it as the project name — mirrors File-mode shape.
+      const firstSeg = paths[0].split('/')[0];
+      const sharedRoot = paths.every(
+        (p) => p.split('/')[0] === firstSeg && p.includes('/'),
+      );
+      const rootPrefix = sharedRoot ? firstSeg + '/' : '';
+      const rootName = sharedRoot
+        ? firstSeg
+        : (suggestedName || 'editor-sketch');
+
+      const files = [];
+      for (const [path, bytes] of Object.entries(entries)) {
+        if (path.endsWith('/')) continue;
+        const rel = rootPrefix ? path.slice(rootPrefix.length) : path;
+        const f = new File([bytes], rel.split('/').pop());
+        Object.defineProperty(f, 'webkitRelativePath', {
+          value: `${rootName}/${rel}`, configurable: true,
+        });
+        files.push(f);
+      }
+
+      const mainFile = pickEditorMain(files);
+      if (!mainFile) throw new Error('No .js file found in the zip.');
+
+      editorState.files = files;
+      editorState.mainFile = mainFile;
+      editorState.projectName = rootName;
+      $('filename').value = rootName;
+
+      setEditorSelected(
+        `✓ ${files.length} files · main: ${mainFile.webkitRelativePath}`,
+      );
+    }
+
+    $('editor-drop').addEventListener('click', () => $('editor-file').click());
+
+    $('editor-file').addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      try {
+        await handleEditorZip(f, f.name.replace(/\.zip$/i, ''));
+      } catch (err) {
+        console.error(err);
+        setEditorSelected('');
+        alert(err.message || 'Could not read that zip.');
+      }
+      e.target.value = '';
+    });
+
+    ['dragenter', 'dragover'].forEach((evt) =>
+      $('editor-drop').addEventListener(evt, (e) => {
+        e.preventDefault();
+        $('editor-drop').classList.add('drag-over');
+      }),
+    );
+    ['dragleave', 'dragend'].forEach((evt) =>
+      $('editor-drop').addEventListener(evt, () =>
+        $('editor-drop').classList.remove('drag-over'),
+      ),
+    );
+    $('editor-drop').addEventListener('drop', async (e) => {
+      e.preventDefault();
+      $('editor-drop').classList.remove('drag-over');
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) return;
+      try {
+        await handleEditorZip(f, f.name.replace(/\.zip$/i, ''));
+      } catch (err) {
+        console.error(err);
+        setEditorSelected('');
+        alert(err.message || 'Could not read that zip.');
+      }
+    });
 
     $('file-choice').addEventListener('change', (e) => {
       const file = fileState.candidates.find(
@@ -560,6 +707,15 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
       if (mode === 'file') {
         if (!fileState.current) throw new Error('Choose a .js file first.');
         return { files: fileState.allFiles, mainFile: fileState.current };
+      }
+      if (mode === 'editor') {
+        if (!editorState.mainFile) {
+          throw new Error('Drop an editor project zip first.');
+        }
+        return {
+          files: editorState.files,
+          mainFile: editorState.mainFile,
+        };
       }
       const code = $('generic-code').value.trim();
       if (!code) throw new Error('Paste a sketch first.');

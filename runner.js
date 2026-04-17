@@ -92,14 +92,34 @@
         clearInterval(p5Poll);
         mode = 'p5';
         patchTime();
-        p5.prototype.registerMethod('post', function () {
+        var hook = function () {
           if (pendingFps != null && typeof frameRate === 'function') {
             frameRate(pendingFps);
             pendingFps = null;
           }
           sendReady();
           parent.postMessage({ type: 'p5export:postdraw' }, '*');
-        });
+        };
+        p5.prototype.registerMethod('post', hook);
+        // p5 auto-instance snapshots _registeredMethods at construction;
+        // if it already ran before we got here (common in global mode),
+        // our prototype push misses it — patch the live instance too.
+        function attachToInstance() {
+          var inst = p5.instance;
+          if (!inst) return false;
+          if (!inst._registeredMethods) inst._registeredMethods = {};
+          if (!inst._registeredMethods.post) inst._registeredMethods.post = [];
+          if (inst._registeredMethods.post.indexOf(hook) === -1) {
+            inst._registeredMethods.post.push(hook);
+          }
+          return true;
+        }
+        if (!attachToInstance()) {
+          var instPoll = setInterval(function () {
+            if (attachToInstance()) clearInterval(instPoll);
+          }, 10);
+          setTimeout(function () { clearInterval(instPoll); }, 3000);
+        }
       }, 10);
 
       // Fallback: if p5 never surfaces (raw canvas / three.js / late load),
