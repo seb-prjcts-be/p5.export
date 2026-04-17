@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>p5.export</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600&family=Alegreya:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.0/lib/p5.min.js"></script>
+  <script src="p5export.js"></script>
+  <script src="runner.js"></script>
+  <script src="storage.js"></script>
+</head>
+<body>
+  <header>
+    <h1>p5<span class="dot">.</span>export</h1>
+    <p class="tag">one-call lossless animation capture</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="folder-row">
+        <div class="folder-info">
+          <span class="folder-label">Output</span>
+          <span id="folder-path">Downloads (default)</span>
+        </div>
+        <div class="folder-actions">
+          <button id="folder-pick" class="ghost">Choose folder…</button>
+          <button id="folder-clear" class="ghost hidden">×</button>
+        </div>
+      </div>
+
+      <div class="modeswitch" role="tablist">
+        <button class="mode active" data-mode="file" role="tab">File</button>
+        <button class="mode" data-mode="generic" role="tab">Generic</button>
+      </div>
+
+      <div class="mode-body" id="file-body">
+        <label>Project folder
+          <div class="picker-row">
+            <button id="project-pick" class="ghost">Pick folder…</button>
+            <span id="project-path" class="picker-path">not picked</span>
+          </div>
+        </label>
+        <div id="recent-row" class="recent-row hidden">
+          <span class="recent-label">Recent</span>
+          <div id="recent-chips" class="recent-chips"></div>
+        </div>
+        <label id="file-choice-wrap" class="hidden">Sketch
+          <select id="file-choice"></select>
+        </label>
+        <div id="file-selected" class="selected hidden"></div>
+      </div>
+
+      <div class="mode-body hidden" id="generic-body">
+        <label>Paste a p5 sketch (global-mode <code>setup()</code> / <code>draw()</code>)
+          <textarea id="generic-code" spellcheck="false" placeholder="function setup() { createCanvas(1080, 1080); }
+function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
+        </label>
+      </div>
+
+      <div class="grid">
+        <label>Profile
+          <select id="profile">
+            <option value="social" selected>Instagram</option>
+            <option value="edit">Edit master</option>
+            <option value="master">Lossless PNG</option>
+          </select>
+        </label>
+        <label>FPS
+          <select id="fps">
+            <option value="24">24</option>
+            <option value="30">30</option>
+            <option value="60" selected>60</option>
+          </select>
+        </label>
+        <label>Duration
+          <input id="seconds" type="number" min="0.1" step="0.1" value="90" />
+          <span id="frames-hint" class="field-hint"></span>
+        </label>
+        <label>Filename
+          <input id="filename" type="text" value="p5export" />
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="record" class="primary" data-idle="● Record" data-again="● Record again">● Record</button>
+        <button id="stop" title="End the recording now and save what we have">
+          ■ Stop now and save
+        </button>
+      </div>
+
+      <div id="status">
+        <div id="status-main"></div>
+        <div id="status-witty"></div>
+      </div>
+
+      <p class="hint">
+        Capture runs as fast as the sketch and encoder allow.
+        The file is written automatically once the frame target is reached.
+      </p>
+    </section>
+
+    <section class="canvas-wrap">
+      <div id="canvas-holder"></div>
+    </section>
+  </main>
+
+  <script>
+    // ---- UI wiring ----------------------------------------------------------
+
+    const $ = (id) => document.getElementById(id);
+
+    // ---- Output folder (File System Access API) ----------------------------
+
+    function slugify(s) {
+      return (s || 'p5export')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'p5export';
+    }
+
+    function timestamp() {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+           + `_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    }
+
+    async function refreshFolderLabel() {
+      const handle = await window.P5ExportStorage.getStoredHandle();
+      if (handle) {
+        $('folder-path').textContent = handle.name + '/';
+        $('folder-path').title = 'Click "Choose folder…" to change';
+        $('folder-clear').classList.remove('hidden');
+      } else {
+        $('folder-path').textContent = 'Downloads (default)';
+        $('folder-clear').classList.add('hidden');
+      }
+      $('folder-pick').disabled = !window.P5ExportStorage.isSupported();
+      if (!window.P5ExportStorage.isSupported()) {
+        $('folder-pick').title = 'Not supported in this browser — falls back to Downloads';
+      }
+    }
+
+    $('folder-pick').addEventListener('click', async () => {
+      try {
+        await window.P5ExportStorage.chooseOutputDir();
+        await refreshFolderLabel();
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error(err);
+          alert(err.message);
+        }
+      }
+    });
+
+    $('folder-clear').addEventListener('click', async () => {
+      await window.P5ExportStorage.clearOutputDir();
+      await refreshFolderLabel();
+    });
+
+    refreshFolderLabel();
+
+    // ---- UI wiring ----------------------------------------------------------
+
+    const modeButtons = document.querySelectorAll('.mode');
+    let mode = 'file';
+    modeButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        mode = btn.dataset.mode;
+        modeButtons.forEach((b) => b.classList.toggle('active', b === btn));
+        $('file-body').classList.toggle('hidden', mode !== 'file');
+        $('generic-body').classList.toggle('hidden', mode !== 'generic');
+      });
+    });
+
+    // User-edited FPS locks in — changing Profile after that won't overwrite
+    // it. This is the "smart default, respects intent" pattern: pick a profile
+    // and the FPS snaps to its preset, unless you've already said otherwise.
+    let fpsTouched = false;
+    $('fps').addEventListener('change', () => { fpsTouched = true; });
+
+    $('profile').addEventListener('change', (e) => {
+      const p = window.P5EXPORT_PROFILES[e.target.value];
+      if (!p) return;
+      if (!fpsTouched && p.playbackFps) $('fps').value = String(p.playbackFps);
+    });
+
+    // ---- Project folder picker (FSA, readwrite) ----------------------------
+
+    const fileState = {
+      current: null,
+      folder: null,
+      candidates: [],
+      allFiles: [],
+      projectHandle: null,
+    };
+
+    function setFileSelected(file) {
+      fileState.current = file || null;
+      const box = $('file-selected');
+      if (!file) {
+        box.textContent = '';
+        box.classList.add('hidden');
+        return;
+      }
+      box.textContent = `✓ ${file.webkitRelativePath || file.name} · ${(file.size / 1024).toFixed(1)} KB`;
+      box.classList.remove('hidden');
+      // Auto-fill filename with the folder name so captures land in
+      // `[project]/export/[timestamp].mp4` without fiddling.
+      const fn = $('filename');
+      const folder = fileState.folder;
+      if (folder) fn.value = folder;
+    }
+
+    // Walk an FSA directory recursively, returning File objects with a shimmed
+    // webkitRelativePath so the runner (which already expects that shape) can
+    // reuse the same code path.
+    async function collectFSADirectory(dirHandle, folderName, prefix = '') {
+      const out = [];
+      for await (const entry of dirHandle.values()) {
+        const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.kind === 'file') {
+          const f = await entry.getFile();
+          Object.defineProperty(f, 'webkitRelativePath', {
+            value: `${folderName}/${relPath}`,
+            configurable: true,
+          });
+          out.push(f);
+        } else if (entry.kind === 'directory') {
+          // Skip our own export subfolder so recordings don't get looped in
+          // as "project files" on subsequent picks.
+          if (prefix === '' && entry.name === 'export') continue;
+          const nested = await collectFSADirectory(entry, folderName, relPath);
+          out.push(...nested);
+        }
+      }
+      return out;
+    }
+
+    async function applyProjectFolder(handle) {
+      fileState.projectHandle = handle;
+      $('project-path').textContent = handle.name + '/';
+      try { await window.P5ExportStorage.addRecentProject(handle); } catch (_) {}
+      refreshRecentChips();
+
+      const files = await collectFSADirectory(handle, handle.name);
+      fileState.allFiles = files;
+
+      const jsFiles = files.filter((f) => /\.js$/i.test(f.name));
+      const box = $('file-selected');
+      const choiceWrap = $('file-choice-wrap');
+      const choice = $('file-choice');
+
+      if (!jsFiles.length) {
+        fileState.current = null;
+        fileState.folder = null;
+        fileState.candidates = [];
+        choiceWrap.classList.add('hidden');
+        box.textContent = 'No .js file found in that folder.';
+        box.classList.remove('hidden');
+        return;
+      }
+
+      jsFiles.sort((a, b) => {
+        const da = a.webkitRelativePath.split('/').length;
+        const db = b.webkitRelativePath.split('/').length;
+        if (da !== db) return da - db;
+        return a.webkitRelativePath.localeCompare(b.webkitRelativePath);
+      });
+
+      fileState.candidates = jsFiles;
+      fileState.folder = jsFiles[0].webkitRelativePath.split('/')[0] || null;
+
+      choice.innerHTML = '';
+      for (const f of jsFiles) {
+        const opt = document.createElement('option');
+        opt.value = f.webkitRelativePath;
+        opt.textContent = f.webkitRelativePath;
+        choice.appendChild(opt);
+      }
+      choiceWrap.classList.toggle('hidden', jsFiles.length < 2);
+
+      setFileSelected(jsFiles[0]);
+    }
+
+    $('project-pick').addEventListener('click', async () => {
+      if (typeof window.showDirectoryPicker !== 'function') {
+        alert('This browser does not support the File System Access API. Use Chrome or Edge.');
+        return;
+      }
+      try {
+        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        await applyProjectFolder(handle);
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error(err);
+          alert(err.message);
+        }
+      }
+    });
+
+    // ---- Recent project chips ----------------------------------------------
+
+    async function refreshRecentChips() {
+      const row = $('recent-row');
+      const box = $('recent-chips');
+      const list = await window.P5ExportStorage.getRecentProjects();
+      if (!list.length) {
+        row.classList.add('hidden');
+        box.innerHTML = '';
+        return;
+      }
+      row.classList.remove('hidden');
+      box.innerHTML = '';
+      for (const entry of list) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.title = `Reopen ${entry.name}`;
+
+        const label = document.createElement('button');
+        label.type = 'button';
+        label.className = 'chip-label';
+        label.textContent = entry.name;
+        label.addEventListener('click', () => reopenRecent(entry));
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'chip-x';
+        remove.title = 'Remove from history';
+        remove.textContent = '×';
+        remove.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await window.P5ExportStorage.removeRecentProject(entry.name);
+          refreshRecentChips();
+        });
+
+        chip.append(label, remove);
+        box.appendChild(chip);
+      }
+    }
+
+    async function reopenRecent(entry) {
+      try {
+        const ok = await window.P5ExportStorage.verifyPermission(entry.handle);
+        if (!ok) {
+          alert(`Permission denied for "${entry.name}".`);
+          return;
+        }
+        await applyProjectFolder(entry.handle);
+      } catch (err) {
+        // Handle can go stale if the folder was moved/deleted.
+        console.warn('[recent] reopen failed:', err);
+        await window.P5ExportStorage.removeRecentProject(entry.name);
+        refreshRecentChips();
+        alert(`Couldn't reopen "${entry.name}" — removed from history.`);
+      }
+    }
+
+    refreshRecentChips();
+
+    $('file-choice').addEventListener('change', (e) => {
+      const file = fileState.candidates.find(
+        (f) => f.webkitRelativePath === e.target.value,
+      );
+      setFileSelected(file);
+    });
+
+    // Synthesize a File for Generic-mode pasted code so it can flow through
+    // the same iframe-based runner as File-mode projects.
+    function makeFileFromText(code, name) {
+      const file = new File([code], name, { type: 'application/javascript' });
+      Object.defineProperty(file, 'webkitRelativePath', {
+        value: `sketch/${name}`, configurable: true,
+      });
+      return file;
+    }
+
+    function getProfile() {
+      const name = $('profile').value;
+      return (name && window.P5EXPORT_PROFILES && window.P5EXPORT_PROFILES[name]) || {};
+    }
+
+    function readOpts() {
+      const profileName = $('profile').value || undefined;
+      const p = getProfile();
+      const seconds = +$('seconds').value;
+      const playbackFps = +$('fps').value || p.playbackFps || 30;
+      return {
+        profile: profileName,
+        frames: Math.max(1, Math.round(seconds * playbackFps)),
+        // renderFps undefined ⇒ uncapped: WebCodecs backpressure throttles.
+        // Only `master` carries an explicit cap so heavy sketches get room.
+        renderFps: p.renderFps,
+        playbackFps,
+        format: p.format || 'mp4',
+        filename: $('filename').value || 'p5export',
+      };
+    }
+
+    function refreshFramesHint() {
+      const fps = +$('fps').value || 30;
+      const sec = +$('seconds').value || 0;
+      const frames = Math.max(1, Math.round(sec * fps));
+      const p = getProfile();
+      const hint = $('frames-hint');
+      if (!hint) return;
+      if (sec <= 0) { hint.textContent = ''; return; }
+      const parts = [`= ${frames} frames`];
+      if (p.format === 'png') {
+        parts.push('PNG sequence');
+      } else if (p.bitrateMbps) {
+        parts.push(`~${(sec * p.bitrateMbps / 8).toFixed(1)}MB`);
+      }
+      hint.textContent = parts.join(' · ');
+    }
+    $('seconds').addEventListener('input', refreshFramesHint);
+    $('fps').addEventListener('change', refreshFramesHint);
+    $('profile').addEventListener('change', refreshFramesHint);
+    refreshFramesHint();
+
+    let lastPreviewURL = null;
+
+    function setPreviewLink(label, href) {
+      if (lastPreviewURL) URL.revokeObjectURL(lastPreviewURL);
+      lastPreviewURL = href;
+      const main = $('status-main');
+      main.innerHTML = '';
+      const prefix = document.createTextNode('✓ ');
+      const a = document.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'status-link';
+      a.textContent = label;
+      main.append(prefix, a);
+    }
+
+    async function buildSinks(opts) {
+      const projectHandle = fileState.projectHandle;
+      const outputHandle = await window.P5ExportStorage.ensureActiveDir();
+
+      // In File-mode with a project picked, write straight into
+      // [project]/export/ so everything stays together.
+      const usingProject = mode === 'file' && !!projectHandle;
+      const handle = usingProject ? projectHandle : outputHandle;
+      const projectSlug = slugify(opts.filename);
+      const subPath = usingProject ? 'export' : projectSlug;
+      const stamp = timestamp();
+
+      const onDone = async (blob, info) => {
+        if (!blob) { // PNG sequence finished
+          $('status-main').textContent = `✓ done · ${info.frames} frames written`;
+          $('status-witty').textContent = handle
+            ? `in ${handle.name}/${subPath}/${stamp}/`
+            : 'frames are in.';
+          return;
+        }
+        const fname = `${stamp}.${info.format}`;
+        const previewURL = URL.createObjectURL(blob);
+        if (handle) {
+          const saved = await window.P5ExportStorage.writeBlobToDir(
+            handle, subPath, fname, blob,
+          );
+          setPreviewLink(
+            `${handle.name}/${saved.subfolder}/${saved.filename}`,
+            previewURL,
+          );
+          $('status-witty').textContent = usingProject
+            ? 'saved next to your project.'
+            : 'click to open it in a new tab.';
+        } else {
+          const a = document.createElement('a');
+          a.href = previewURL;
+          a.download = fname;
+          a.click();
+          setPreviewLink(fname, previewURL);
+          $('status-witty').textContent = 'downloaded — click to play.';
+        }
+      };
+
+      let onFrame;
+      if (opts.format === 'png') {
+        if (!handle) {
+          throw new Error(
+            'PNG sequence: pick a project folder or an output folder first.',
+          );
+        }
+        const sessionFolder = `${subPath}/${stamp}`;
+        onFrame = async (blob, frameInfo) => {
+          await window.P5ExportStorage.writeBlobToDir(
+            handle, sessionFolder, frameInfo.filename, blob,
+          );
+        };
+      }
+
+      return { onDone, onFrame };
+    }
+
+    const WITTY = [
+      "Go make yourself a coffee.",
+      "The pixels are lining up politely.",
+      "Frames are in the oven.",
+      "The wave gods are at work.",
+      "Bits and bytes are negotiating terms.",
+      "Time for a snack? Good call.",
+      "Every frame is a tiny artwork.",
+      "We draw, we don't rush.",
+      "Perlin noise is quietly sweating.",
+      "The canvas is holding its breath.",
+      "Slow art beats fast noise.",
+      "RGB is having a philosophical moment.",
+      "Keep calm, the render is rendering.",
+      "Compression artifacts? Not today.",
+      "Best not look at the deadline right now.",
+      "There. One more frame closer to eternity.",
+      "The GPU is giving it everything.",
+      "Fan spinning up — that's a good sign.",
+      "Scientifically proven: waiting improves art.",
+      "This one will be a good frame. Promise.",
+      "Your coffee's getting cold. Go make another.",
+      "One sec… just nudging a subpixel.",
+      "Patience is the highest framerate.",
+      "Still working, still looking good.",
+      "p5.js and the encoder are brainstorming.",
+    ];
+
+    function fmtTime(sec) {
+      if (!isFinite(sec) || sec < 0) return '…';
+      sec = Math.round(sec);
+      if (sec < 60) return `${sec}s`;
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return `${m}m ${s.toString().padStart(2, '0')}s`;
+    }
+
+    function setStatus(msg, kind = '') {
+      const el = $('status');
+      $('status-main').textContent = msg;
+      $('status-witty').textContent = '';
+      el.dataset.kind = kind;
+    }
+
+    let activeCapture = null;
+    let activeRunner = null;
+
+    // Returns { files, mainFile } ready for the iframe runner.
+    function resolveProject() {
+      if (mode === 'file') {
+        if (!fileState.current) throw new Error('Choose a .js file first.');
+        return { files: fileState.allFiles, mainFile: fileState.current };
+      }
+      const code = $('generic-code').value.trim();
+      if (!code) throw new Error('Paste a sketch first.');
+      const file = makeFileFromText(code, 'sketch.js');
+      return { files: [file], mainFile: file };
+    }
+
+    $('record').addEventListener('click', async () => {
+      try {
+        const opts = readOpts();
+        console.info('[p5export] record opts', opts);
+        const project = resolveProject();
+        const sinks = await buildSinks(opts);
+        opts.onDone = sinks.onDone;
+        opts.onFrame = sinks.onFrame;
+
+        // Tear down any previous capture/runner.
+        if (activeCapture) {
+          try { await activeCapture.abort(); } catch (_) {}
+          activeCapture = null;
+        }
+        if (activeRunner) {
+          try { activeRunner.stop(); activeRunner.cleanup(); } catch (_) {}
+          activeRunner = null;
+        }
+
+        setStatus('loading project…');
+        activeRunner = await window.P5ExportRunner.run({
+          files: project.files,
+          mainFile: project.mainFile,
+          renderFps: opts.renderFps,
+          playbackFps: opts.playbackFps,
+          holderId: 'canvas-holder',
+        });
+
+        let captureStarting = false;
+        activeRunner.on('ready', async ({ canvas }) => {
+          if (captureStarting || activeCapture) return;
+          captureStarting = true;
+          setStatus(`recording ${opts.frames} frames at ${opts.renderFps} fps…`);
+          activeCapture = await window.p5export.startCapture({
+            canvas, ...opts,
+          });
+        });
+
+        activeRunner.on('postdraw', () => {
+          if (activeCapture) activeCapture.tick();
+        });
+
+        activeRunner.on('error', (err) => {
+          console.error('[runner]', err);
+          setStatus(err.message || 'sketch error', 'error');
+        });
+      } catch (err) {
+        console.error(err);
+        setStatus(err.message, 'error');
+      }
+    });
+
+    $('stop').addEventListener('click', async () => {
+      if (activeCapture) {
+        try { await activeCapture.stop(); } catch (err) { console.error(err); }
+        activeCapture = null;
+      }
+      if (activeRunner) {
+        try { activeRunner.stop(); } catch (_) {}
+      }
+    });
+
+    // Stop is only meaningful during an active capture.
+    $('stop').disabled = true;
+
+    let captureStart = 0;
+
+    window.addEventListener('p5export:start', (e) => {
+      captureStart = performance.now();
+      const btn = $('record');
+      btn.classList.add('recording');
+      btn.textContent = btn.dataset.idle;
+      $('stop').disabled = false;
+      setStatus(`recording — ${e.detail.frames} frames → ${e.detail.format}`);
+    });
+
+    window.addEventListener('p5export:encoding', () => {
+      // Frames are done; encoding can't be interrupted.
+      $('stop').disabled = true;
+    });
+
+    function resetRecordUI(afterCapture) {
+      const btn = $('record');
+      btn.classList.remove('recording');
+      if (afterCapture) btn.textContent = btn.dataset.again;
+      $('stop').disabled = true;
+    }
+
+    window.addEventListener('p5export:done', () => resetRecordUI(true));
+    window.addEventListener('p5export:aborted', () => resetRecordUI(true));
+    window.addEventListener('p5export:error', () => resetRecordUI(false));
+
+    window.addEventListener('p5export:progress', (e) => {
+      const { frame, total } = e.detail;
+      const elapsed = (performance.now() - captureStart) / 1000;
+      const fps = elapsed > 0 ? frame / elapsed : 0;
+      const etaSec = total && fps > 0 ? (total - frame) / fps : 0;
+
+      let main;
+      if (total) {
+        const pct = Math.min(100, Math.round((frame / total) * 100));
+        main = `frame ${frame} / ${total} · ${pct}% · ETA ${fmtTime(etaSec)}`;
+      } else {
+        main = `frame ${frame} · ${fmtTime(elapsed)}`;
+      }
+      $('status-main').textContent = main;
+      $('status-witty').textContent = WITTY[Math.floor(elapsed / 5) % WITTY.length];
+
+      if (total && frame >= total) {
+        $('status-main').textContent = 'encoding…';
+        $('status-witty').textContent = 'stitching the frames together.';
+      }
+    });
+
+    window.addEventListener('p5export:encoding-progress', (e) => {
+      const elapsed = e.detail.elapsed || 0;
+      $('status-main').textContent = `encoding… · ${fmtTime(elapsed)}`;
+    });
+  </script>
+</body>
+</html>

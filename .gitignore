@@ -1,0 +1,17 @@
+# Claude Code workspace config (local)
+.claude/
+
+# Legacy preset snippets (not loaded by the app)
+presets/
+
+# Export output
+export/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Node (in case someone adds tooling later)
+node_modules/
