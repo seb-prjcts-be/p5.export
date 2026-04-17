@@ -1,5 +1,6 @@
 # Claude Code workspace config (local)
 .claude/
+CLAUDE.md
 
 # Legacy preset snippets (not loaded by the app)
 presets/
