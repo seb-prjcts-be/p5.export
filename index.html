@@ -71,12 +71,16 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
       </div>
 
       <div class="mode-body hidden" id="editor-body">
-        <label>p5 editor URL (reference)
-          <input id="editor-url" type="url" placeholder="https://editor.p5js.org/USER/sketches/ID" />
+        <label>p5 editor URL
+          <div class="picker-row">
+            <input id="editor-url" type="url" placeholder="https://editor.p5js.org/USER/sketches/ID" />
+            <button id="editor-fetch" class="ghost" type="button">Fetch zip</button>
+          </div>
+          <span id="editor-url-hint" class="field-hint">Paste a public sketch URL — the button triggers its zip download.</span>
         </label>
         <div class="editor-drop" id="editor-drop">
-          <p>Drop the project <code>.zip</code> here<br />or click to pick</p>
-          <p class="editor-hint">Export from the editor: <strong>File → Download</strong></p>
+          <p>Drop the downloaded <code>.zip</code> here<br />or click to pick</p>
+          <p class="editor-hint">Exports also via <strong>File → Download</strong> in the editor.</p>
           <input id="editor-file" type="file" accept=".zip" hidden />
         </div>
         <div id="editor-selected" class="selected hidden"></div>
@@ -476,6 +480,50 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
         `✓ ${files.length} files · main: ${mainFile.webkitRelativePath}`,
       );
     }
+
+    // Extract the sketch ID from any of the editor's public URL shapes
+    // (/sketches/:id, /full/:id, /present/:id, /embed/:id).
+    function parseEditorSketchId(urlStr) {
+      try {
+        const u = new URL(urlStr);
+        if (u.hostname !== 'editor.p5js.org') return null;
+        const parts = u.pathname.split('/').filter(Boolean);
+        const last = parts[parts.length - 1];
+        return last && /^[A-Za-z0-9_-]{4,}$/.test(last) ? last : null;
+      } catch (_) { return null; }
+    }
+
+    function flashDropZone() {
+      const el = $('editor-drop');
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 2000);
+    }
+
+    $('editor-fetch').addEventListener('click', () => {
+      const url = $('editor-url').value.trim();
+      if (!url) {
+        $('editor-url').focus();
+        return;
+      }
+      const id = parseEditorSketchId(url);
+      if (!id) {
+        alert('Not a recognised editor.p5js.org URL.\nExample: https://editor.p5js.org/USER/sketches/ABC123');
+        return;
+      }
+      // editor.p5js.org serves Content-Disposition: attachment on this path,
+      // so navigating to it triggers a download without leaving the page.
+      // CORS blocks a direct fetch, but user-gesture navigation is fine.
+      const zipURL = `https://editor.p5js.org/editor/projects/${id}/zip`;
+      const a = document.createElement('a');
+      a.href = zipURL;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      $('editor-url-hint').textContent =
+        'Zip download started. Drop it below when your browser is done.';
+      flashDropZone();
+    });
 
     $('editor-drop').addEventListener('click', () => $('editor-file').click());
 
