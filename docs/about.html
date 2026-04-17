@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>About — p5.export</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600&family=Alegreya:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+
+  <nav id="navbar">
+    <a href="../index.html" class="nav-logo">p5<span class="dot">.</span>export</a>
+    <button class="nav-hamburger" aria-label="Toggle menu" onclick="this.closest('nav').classList.toggle('nav-open')">
+      <span></span><span></span><span></span>
+    </button>
+    <ul class="nav-links">
+      <li><a href="about.html" class="active">About</a></li>
+      <li><a href="credits.html">Credits</a></li>
+      <li><a href="https://github.com/seb-prjcts-be/p5.export" target="_blank" rel="noopener">GitHub</a></li>
+    </ul>
+  </nav>
+
+  <main class="docs-wrap">
+    <h1>About p5<span class="dot">.</span>export</h1>
+    <p class="intro">
+      One-click lossless animation capture for p5.js sketches — and any
+      other canvas-based animation. Point it at a project folder, press
+      Record, and a ready-to-post MP4 (or a PNG sequence) lands in
+      <code>[project]/export/</code> right next to the sources.
+    </p>
+
+    <h2>Why</h2>
+    <p>
+      Realtime encoders like <code>MediaRecorder</code> or screen-record
+      tools visibly stumble on dense p5 animations — wave shifts, flow
+      fields, moiré patterns. The bitrate can't keep up, the encoder
+      drops frames, and the final video doesn't look like the sketch.
+    </p>
+    <p>
+      p5.export renders each frame, hands it to an offline H.264 encoder
+      (<a href="https://mediabunny.dev" target="_blank" rel="noopener">Mediabunny</a>
+      + WebCodecs) or writes it as a lossless PNG, and only finalises the
+      MP4 once every frame is in. The output shows what the sketch
+      actually drew — not what a realtime encoder could squeeze into the
+      bandwidth.
+    </p>
+
+    <h2>How it works</h2>
+    <p>
+      The sketch runs inside an iframe built from your project's real
+      <code>index.html</code>, so addons that capture references at load
+      time (p5.waves, p5.svg, p5.sound, …) behave exactly as they do
+      standalone. A small bridge script is injected at the top of the
+      iframe's <code>&lt;head&gt;</code> to relay each post-draw tick
+      back to the parent, and to override <code>millis()</code> and
+      <code>deltaTime</code> so sketch-time advances in lockstep with the
+      captured frames — independent of wall-clock.
+    </p>
+    <p>
+      Because capture is offline, <strong>wall-clock time is decoupled
+      from playback time</strong>. Lightweight sketches capture faster
+      than real-time (10 s at 60 fps in a second or two). Heavy sketches
+      on the <code>master</code> profile get 500 ms per frame to finish
+      drawing and still produce smooth 60 fps output, as long as the
+      animation reads time from <code>millis()</code> / <code>deltaTime</code>.
+    </p>
+
+    <h2>What you get</h2>
+    <ul>
+      <li><strong>Instagram-ready MP4</strong> — faststart, <code>mp42</code> brand, keyframe per second, H.264 High profile. Tuned for IG feed &amp; Reels.</li>
+      <li><strong>Edit-master MP4</strong> — 60 fps / 20 Mbps, for Premiere &amp; DaVinci.</li>
+      <li><strong>Lossless PNG sequence</strong> — streamed straight to disk via the File System Access API, so you can render masters longer than RAM would allow. Assemble with ffmpeg locally.</li>
+    </ul>
+
+    <h2>Requirements</h2>
+    <p>
+      Chromium-based browsers only (Chrome / Edge) — the File System
+      Access API is used to grant readwrite permission on the project
+      folder so exports can land next to the sources without a Downloads
+      round-trip. An HTTPS or <code>localhost</code> origin is required
+      for FSA to work.
+    </p>
+
+    <h2>Author</h2>
+    <p>
+      Built by <a href="https://prjcts.be" target="_blank" rel="noopener">Sebastien Vanblaere</a>
+      as part of prjcts.be. MIT licensed.
+      See <a href="https://github.com/seb-prjcts-be/p5.export" target="_blank" rel="noopener">the repo</a>
+      for the full source, docs, and API reference.
+    </p>
+  </main>
+
+</body>
+</html>

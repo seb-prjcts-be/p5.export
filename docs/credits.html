@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Credits — p5.export</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600&family=Alegreya:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+
+  <nav id="navbar">
+    <a href="../index.html" class="nav-logo">p5<span class="dot">.</span>export</a>
+    <button class="nav-hamburger" aria-label="Toggle menu" onclick="this.closest('nav').classList.toggle('nav-open')">
+      <span></span><span></span><span></span>
+    </button>
+    <ul class="nav-links">
+      <li><a href="about.html">About</a></li>
+      <li><a href="credits.html" class="active">Credits</a></li>
+      <li><a href="https://github.com/seb-prjcts-be/p5.export" target="_blank" rel="noopener">GitHub</a></li>
+    </ul>
+  </nav>
+
+  <main class="docs-wrap">
+    <h1>Credits <span class="dot">&amp;</span> acknowledgements</h1>
+    <p class="intro">
+      <code>p5.export</code> is a standalone capture tool for p5.js
+      animations, but stands on the thinking and API decisions of
+      other, better people.
+    </p>
+
+    <h2>Direct dependencies</h2>
+    <ul>
+      <li>
+        <a href="https://p5js.org/" target="_blank" rel="noopener">p5.js</a> —
+        Lauren McCarthy, The Processing Foundation, and hundreds of
+        contributors. LGPL. The engine that draws the animations.
+      </li>
+      <li>
+        <a href="https://mediabunny.dev" target="_blank" rel="noopener">Mediabunny</a> —
+        Vanilagy. MPL-2.0. Encodes the MP4 output via WebCodecs in the
+        browser.
+      </li>
+    </ul>
+
+    <h2>Inspiration</h2>
+    <ul>
+      <li>
+        <a href="https://github.com/tapioca24/p5.capture" target="_blank" rel="noopener">p5.capture</a> —
+        tapioca24. MIT. The three-profile approach
+        (<code>social</code> / <code>master</code> / <code>edit</code>),
+        the <code>duration</code>-in-frames convention, and the
+        <code>registerMethod('post', …)</code> integration with p5's draw
+        loop are directly inspired by p5.capture. If you want a fully
+        UI-driven capture experience for p5.js, use <em>that</em>.
+      </li>
+      <li>
+        <a href="https://github.com/limzykenneth/p5.record.js" target="_blank" rel="noopener">p5.record.js</a> —
+        Lim Zi Yang. The original reminder that MediaRecorder alone is
+        not enough for dense p5 imagery.
+      </li>
+    </ul>
+
+    <h2>Why a from-scratch implementation</h2>
+    <ul>
+      <li>
+        Per-frame PNG streaming straight to File System Access (no zip,
+        no memory ceiling for long masters).
+      </li>
+      <li>
+        Modern H.264 via WebCodecs + Mediabunny (hardware-accelerated,
+        no 25 MB ffmpeg.wasm blob).
+      </li>
+      <li>
+        Plugin-ready standalone <code>p5export()</code> function without
+        hidden singletons.
+      </li>
+    </ul>
+    <p>
+      Any improvement that goes beyond these three points should
+      eventually find its way back through honest attribution, issues,
+      or pull requests to the original projects.
+    </p>
+  </main>
+
+</body>
+</html>

@@ -14,12 +14,20 @@
   <script src="storage.js"></script>
 </head>
 <body>
-  <header>
-    <h1>p5<span class="dot">.</span>export</h1>
-    <p class="tag">one-call lossless animation capture</p>
-  </header>
+  <nav id="navbar">
+    <a href="index.html" class="nav-logo">p5<span class="dot">.</span>export</a>
+    <button class="nav-hamburger" aria-label="Toggle menu" onclick="this.closest('nav').classList.toggle('nav-open')">
+      <span></span><span></span><span></span>
+    </button>
+    <ul class="nav-links">
+      <li><a href="docs/about.html">About</a></li>
+      <li><a href="docs/credits.html">Credits</a></li>
+      <li><a href="https://github.com/seb-prjcts-be/p5.export" target="_blank" rel="noopener">GitHub</a></li>
+    </ul>
+  </nav>
+  <p class="tag">one-call lossless animation capture</p>
 
-  <main>
+  <main class="app">
     <section class="panel">
       <div class="folder-row">
         <div class="folder-info">
