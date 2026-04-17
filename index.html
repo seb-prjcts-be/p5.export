@@ -42,7 +42,6 @@
 
       <div class="modeswitch" role="tablist">
         <button class="mode active" data-mode="file" role="tab">File</button>
-        <button class="mode" data-mode="generic" role="tab">Generic</button>
         <button class="mode" data-mode="editor" role="tab">Editor</button>
       </div>
 
@@ -61,13 +60,6 @@
           <select id="file-choice"></select>
         </label>
         <div id="file-selected" class="selected hidden"></div>
-      </div>
-
-      <div class="mode-body hidden" id="generic-body">
-        <label>Paste a p5 sketch (global-mode <code>setup()</code> / <code>draw()</code>)
-          <textarea id="generic-code" spellcheck="false" placeholder="function setup() { createCanvas(1080, 1080); }
-function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
-        </label>
       </div>
 
       <div class="mode-body hidden" id="editor-body">
@@ -198,7 +190,6 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
         mode = btn.dataset.mode;
         modeButtons.forEach((b) => b.classList.toggle('active', b === btn));
         $('file-body').classList.toggle('hidden', mode !== 'file');
-        $('generic-body').classList.toggle('hidden', mode !== 'generic');
         $('editor-body').classList.toggle('hidden', mode !== 'editor');
       });
     });
@@ -572,16 +563,6 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
       setFileSelected(file);
     });
 
-    // Synthesize a File for Generic-mode pasted code so it can flow through
-    // the same iframe-based runner as File-mode projects.
-    function makeFileFromText(code, name) {
-      const file = new File([code], name, { type: 'application/javascript' });
-      Object.defineProperty(file, 'webkitRelativePath', {
-        value: `sketch/${name}`, configurable: true,
-      });
-      return file;
-    }
-
     function getProfile() {
       const name = $('profile').value;
       return (name && window.P5EXPORT_PROFILES && window.P5EXPORT_PROFILES[name]) || {};
@@ -752,10 +733,6 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
 
     // Returns { files, mainFile } ready for the iframe runner.
     function resolveProject() {
-      if (mode === 'file') {
-        if (!fileState.current) throw new Error('Choose a .js file first.');
-        return { files: fileState.allFiles, mainFile: fileState.current };
-      }
       if (mode === 'editor') {
         if (!editorState.mainFile) {
           throw new Error('Drop an editor project zip first.');
@@ -765,10 +742,8 @@ function draw() { background(20); ellipse(mouseX, mouseY, 80); }"></textarea>
           mainFile: editorState.mainFile,
         };
       }
-      const code = $('generic-code').value.trim();
-      if (!code) throw new Error('Paste a sketch first.');
-      const file = makeFileFromText(code, 'sketch.js');
-      return { files: [file], mainFile: file };
+      if (!fileState.current) throw new Error('Choose a .js file first.');
+      return { files: fileState.allFiles, mainFile: fileState.current };
     }
 
     $('record').addEventListener('click', async () => {
