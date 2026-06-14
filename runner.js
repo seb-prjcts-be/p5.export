@@ -130,6 +130,28 @@
           }
           return origMillis.call(this);
         };
+        // Also make Date.now() frame-deterministic while recording, for the
+        // (rarer) sketches that read t = Date.now() instead of millis(). Keep
+        // the real epoch baseline so absolute timestamps stay sane and only the
+        // per-frame ADVANCE becomes deterministic. NOT done for
+        // performance.now(): p5's own frameRate() scheduler reads it, so
+        // freezing it would stall the draw loop. Non-p5 sketches (raf mode)
+        // are unaffected by this and may still record fast — see README.
+        if (typeof Date !== 'undefined' && typeof Date.now === 'function' &&
+            !Date.now.__p5exportWrapped) {
+          var origDateNow = Date.now;
+          var dateBaseline = origDateNow();
+          var patchedNow = function () {
+            if (deterministicTime) {
+              var fc = (typeof p5 !== 'undefined' && p5.instance &&
+                        p5.instance.frameCount) || 0;
+              return dateBaseline + fc * (1000 / playbackFps);
+            }
+            return origDateNow();
+          };
+          patchedNow.__p5exportWrapped = true;
+          Date.now = patchedNow;
+        }
         if (typeof p5.prototype.registerMethod === 'function') {
           p5.prototype.registerMethod('pre', function () {
             if (deterministicTime) {
@@ -169,6 +191,7 @@
           type: 'p5export:ready',
           width: c.width,
           height: c.height,
+          mode: mode,            // 'p5' | 'raf' — lets the parent warn on non-p5
         }, '*');
         return true;
       }
@@ -368,6 +391,7 @@
             canvas: iframe.contentDocument.querySelector('canvas'),
             width: e.data.width,
             height: e.data.height,
+            mode: e.data.mode,
           });
           break;
         case 'p5export:postdraw':

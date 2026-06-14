@@ -55,9 +55,11 @@
       time (p5.waves, p5.svg, p5.sound, …) behave exactly as they do
       standalone. A small bridge script is injected at the top of the
       iframe's <code>&lt;head&gt;</code> to relay each post-draw tick
-      back to the parent, and to override <code>millis()</code> and
-      <code>deltaTime</code> so sketch-time advances in lockstep with the
-      captured frames — independent of wall-clock.
+      back to the parent, and to override <code>millis()</code>,
+      <code>deltaTime</code> and <code>Date.now()</code> so sketch-time
+      advances in lockstep with the captured frames — independent of
+      wall-clock. (<code>performance.now()</code> and non-p5 sketches are
+      not overridden and may record fast — see below.)
     </p>
     <p>
       Because capture is offline, <strong>wall-clock time is decoupled
@@ -65,7 +67,15 @@
       than real-time (10 s at 60 fps in a second or two). Heavy sketches
       on the <code>master</code> profile get 500 ms per frame to finish
       drawing and still produce smooth 60 fps output, as long as the
-      animation reads time from <code>millis()</code> / <code>deltaTime</code>.
+      animation reads time from <code>millis()</code>, <code>deltaTime</code>
+      or <code>Date.now()</code>.
+    </p>
+    <p>
+      <strong>Caveat:</strong> sketches that drive motion from
+      <code>performance.now()</code>, or non-p5 sketches (raw canvas,
+      three.js), are <em>not</em> made frame-deterministic — capture runs
+      below playback fps, so their recordings can play back too fast. The
+      recorder warns when it detects a non-p5 sketch.
     </p>
 
     <h2>What you get</h2>

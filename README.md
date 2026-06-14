@@ -137,14 +137,32 @@ the zip work without rewriting the sketch.
 `master` intentionally runs `frameRate(2)` so heavy draws have up to
 500 ms to complete each frame. The MP4 is still played back at 60 fps,
 so the final video looks smooth — **but only for sketches whose
-animation reads time from `millis()` / `deltaTime`**. The bridge
-overrides those inside the iframe to be frame-deterministic
+animation reads time from `millis()`, `deltaTime` or `Date.now()`**. The
+bridge overrides those inside the iframe to be frame-deterministic
 (`millis() = frameCount * (1000 / playbackFps)`) so sketch time
 advances 1:1 with playback, regardless of real wall-clock.
 
 Sketches that animate via `frameCount` directly will look slowed down
 on `master`. Stick to Instagram / Edit for those, or rewrite the time
 source to be millis-based.
+
+### Time-source caveat (recordings that play back too fast)
+
+Frame-determinism is applied to `millis()`, `deltaTime` and `Date.now()`.
+It is **not** applied to:
+
+- **`performance.now()`** — p5's own `frameRate()` scheduler reads it, so
+  freezing it would stall the draw loop. Left on real wall-clock by design.
+- **Non-p5 sketches** (raw canvas, three.js, …) — the runner drives these
+  via a plain `requestAnimationFrame` loop and cannot know which clock they
+  read. The recorder prints a console + status warning for this case.
+
+Because capture runs below `playbackFps` (WebCodecs backpressure throttles
+it), any animation driven by one of those untouched wall-clock sources packs
+more motion into each encoded second and **plays back too fast** (≈
+`playbackFps / real-capture-fps`). If you need exact capture timing there,
+drive motion from `millis()`/`deltaTime`/`Date.now()`, or from a frame
+counter you advance once per frame.
 
 ## Lossless master workflow (PNG → MP4)
 
