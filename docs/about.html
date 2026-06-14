@@ -57,7 +57,11 @@
       iframe's <code>&lt;head&gt;</code> to relay each post-draw tick
       back to the parent, and to override <code>millis()</code> and
       <code>deltaTime</code> so sketch-time advances in lockstep with the
-      captured frames — independent of wall-clock.
+      captured frames — independent of wall-clock. Non-p5 renderers
+      (three.js, raw canvas) are driven through a fallback loop, where the
+      bridge additionally makes <code>performance.now()</code>,
+      <code>Date.now()</code> and the rAF timestamp frame-deterministic, so
+      they stay in lockstep too.
     </p>
     <p>
       Because capture is offline, <strong>wall-clock time is decoupled

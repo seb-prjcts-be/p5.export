@@ -28,8 +28,12 @@
   // When unset, the sketch runs as fast as p5+encoder can sustain —
   // WebCodecs backpressure is the throttle, so correctness is preserved.
   // Only `master` keeps an explicit renderFps cap so heavy sketches get
-  // room per frame; the deterministic-time patch in the bridge keeps
-  // motion accurate regardless.
+  // room per frame. Motion stays accurate regardless of real render rate
+  // because the bridge runs a frame-deterministic clock: p5 sketches via the
+  // millis()/deltaTime patch, non-p5 (raf-fallback) sketches via a
+  // performance.now()/Date.now()/rAF override. Caveat: a p5 sketch that reads
+  // performance.now() directly instead of millis()/deltaTime is NOT covered —
+  // overriding the global clock in p5 mode would deadlock frameRate() pacing.
   const PROFILES = {
     social: { format: 'mp4', playbackFps: 60, bitrateMbps: 3.5 },
     edit:   { format: 'mp4', playbackFps: 60, bitrateMbps: 20 },

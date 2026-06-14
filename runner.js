@@ -24,6 +24,13 @@
       var timePatchInstalled = false;
       var origMillis = null;
 
+      // Frame-deterministic capture clock. Advances one slot (1/playbackFps)
+      // per captured frame, independent of real render speed.
+      var captureFrame = 0;
+      var clockBaseReal = 0;
+      var clockBaseDate = 0;
+      function virtualClockMs() { return captureFrame * (1000 / playbackFps); }
+
       // Assets map (path -> blob URL) is set by the bundle script that runs
       // right before this bridge. Used to resolve runtime loadImage/loadJSON
       // calls which otherwise would hit the iframe's blob-URL base and miss.
@@ -64,6 +71,49 @@
           var resolved = typeof url === 'string' ? resolveAssetPath(url) : url;
           var rest = Array.prototype.slice.call(arguments, 2);
           return origOpen.apply(this, [method, resolved].concat(rest));
+        };
+      }
+
+      // Global wall-clock override for the NON-p5 (raf fallback) path. A non-p5
+      // renderer — three.js, raw canvas — animates straight off performance.now()
+      // / Date.now() / the rAF timestamp, while the encoder lays frames down at a
+      // fixed playbackFps cadence. Without this the motion runs at the
+      // (backpressure-throttled) real capture rate and the file plays back too
+      // fast. So while capturing in raf mode we hand the sketch a frame-
+      // deterministic clock: encoded time == animation time, regardless of real
+      // render speed.
+      //
+      // Scoped to raf mode ON PURPOSE: p5's own draw-loop throttle reads the same
+      // performance.now() / rAF timestamp to pace frameRate(), so overriding them
+      // in p5 mode would deadlock a capped profile like master (the virtual
+      // clock only advances on a redraw, but p5 won't redraw until time passes).
+      // p5 sketches get their deterministic clock through the millis()/deltaTime
+      // patch in patchTime() instead, leaving p5's scheduler on real time.
+      var origPerfNow =
+        (window.performance && typeof window.performance.now === 'function')
+          ? window.performance.now.bind(window.performance)
+          : null;
+      var origDateNow = Date.now;
+      var origRAF =
+        typeof window.requestAnimationFrame === 'function'
+          ? window.requestAnimationFrame.bind(window)
+          : null;
+      function captureClockActive() {
+        return deterministicTime && mode === 'raf';
+      }
+      if (origPerfNow) {
+        window.performance.now = function () {
+          return captureClockActive() ? clockBaseReal + virtualClockMs() : origPerfNow();
+        };
+      }
+      Date.now = function () {
+        return captureClockActive() ? clockBaseDate + virtualClockMs() : origDateNow();
+      };
+      if (origRAF) {
+        window.requestAnimationFrame = function (cb) {
+          return origRAF(function (realTs) {
+            cb(captureClockActive() ? clockBaseReal + virtualClockMs() : realTs);
+          });
         };
       }
 
@@ -144,6 +194,12 @@
         if (e.data.type === 'p5export:config') {
           pendingFps = e.data.renderFps;
           if (e.data.playbackFps) playbackFps = e.data.playbackFps;
+          // Anchor the virtual clock to real time at record-start so sketches
+          // that grabbed a t0 before recording see a continuous, deterministic
+          // forward clock (no jump/negative elapsed).
+          captureFrame = 0;
+          clockBaseReal = origPerfNow ? origPerfNow() : 0;
+          clockBaseDate = origDateNow();
           deterministicTime = true;
           patchTime();
           // Only cap draw() rate when caller explicitly asked for it
@@ -222,7 +278,10 @@
         var loop = function () {
           if (mode !== 'raf') return;
           sendReady();
-          if (readySent) parent.postMessage({ type: 'p5export:postdraw' }, '*');
+          if (readySent) {
+            parent.postMessage({ type: 'p5export:postdraw' }, '*');
+            if (deterministicTime) captureFrame++;
+          }
           requestAnimationFrame(loop);
         };
         requestAnimationFrame(loop);
