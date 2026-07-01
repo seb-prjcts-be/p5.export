@@ -58,8 +58,10 @@
       back to the parent, and to override <code>millis()</code>,
       <code>deltaTime</code> and <code>Date.now()</code> so sketch-time
       advances in lockstep with the captured frames — independent of
-      wall-clock. (<code>performance.now()</code> and non-p5 sketches are
-      not overridden and may record fast — see below.)
+      wall-clock. Non-p5 sketches (raw canvas, three.js) get the same
+      treatment through their <code>requestAnimationFrame</code> loop, where
+      <code>performance.now()</code>, <code>Date.now()</code> and the rAF
+      timestamp are all virtualised — see below.
     </p>
     <p>
       Because capture is offline, <strong>wall-clock time is decoupled
@@ -71,11 +73,13 @@
       or <code>Date.now()</code>.
     </p>
     <p>
-      <strong>Caveat:</strong> sketches that drive motion from
-      <code>performance.now()</code>, or non-p5 sketches (raw canvas,
-      three.js), are <em>not</em> made frame-deterministic — capture runs
-      below playback fps, so their recordings can play back too fast. The
-      recorder warns when it detects a non-p5 sketch.
+      <strong>Caveat:</strong> in <em>p5</em> sketches,
+      <code>performance.now()</code> is left on real wall-clock (p5's own
+      <code>frameRate()</code> scheduler reads it, so freezing it would stall
+      the draw loop) — a p5 sketch that reads it directly can still record
+      fast; use <code>millis()</code>/<code>deltaTime</code> instead. The only
+      gap for non-p5 sketches is motion timed off
+      <code>setTimeout</code>/<code>setInterval</code>, which are left alone.
     </p>
 
     <h2>What you get</h2>
