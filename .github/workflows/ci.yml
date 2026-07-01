@@ -1,0 +1,45 @@
+name: CI
+
+# Provides the "validate" status check that main-branch protection can
+# require before a pull request is merged. Runs on PRs into any branch and
+# on pushes to main. No build step — this is a no-bundler static site, so we
+# just confirm the JavaScript parses and the expected files are present.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check JavaScript syntax
+        run: |
+          shopt -s nullglob
+          files=(*.js)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No .js files found at repo root — nothing to check." >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            echo "node --check $f"
+            node --check "$f"
+          done
+
+      - name: Check expected files are present
+        run: |
+          missing=0
+          for f in index.html p5export.js runner.js storage.js style.css; do
+            if [ ! -f "$f" ]; then
+              echo "Missing expected file: $f" >&2
+              missing=1
+            fi
+          done
+          exit $missing
