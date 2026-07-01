@@ -316,6 +316,16 @@ p5.export/
 └── README.md
 ```
 
+## Development
+
+CI (`.github/workflows/ci.yml`) runs a `validate` check on every pull
+request — it confirms the JavaScript parses and the expected files are
+present. There is no build step; this is a no-bundler static site.
+
+To harden the `main` branch against force-pushes, deletion, and unreviewed
+merges, see [docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md) for the
+recommended ruleset / branch-protection settings.
+
 ## Dependencies (CDN, no build)
 
 - [p5.js](https://github.com/processing/p5.js) 1.11.0 — used by the
