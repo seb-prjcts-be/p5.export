@@ -146,23 +146,31 @@ Sketches that animate via `frameCount` directly will look slowed down
 on `master`. Stick to Instagram / Edit for those, or rewrite the time
 source to be millis-based.
 
-### Time-source caveat (recordings that play back too fast)
+### Time sources and frame-determinism
 
-Frame-determinism is applied to `millis()`, `deltaTime` and `Date.now()`.
-It is **not** applied to:
+Capture usually runs below `playbackFps` (WebCodecs backpressure throttles
+it), so any animation driven by an un-virtualised wall-clock would pack more
+motion into each encoded second and **play back too fast** (≈
+`playbackFps / real-capture-fps`). The bridge patches the time sources a
+sketch is likely to read so encoded time equals animation time. What's
+covered depends on how the sketch runs:
 
-- **`performance.now()`** — p5's own `frameRate()` scheduler reads it, so
-  freezing it would stall the draw loop. Left on real wall-clock by design.
-- **Non-p5 sketches** (raw canvas, three.js, …) — the runner drives these
-  via a plain `requestAnimationFrame` loop and cannot know which clock they
-  read. The recorder prints a console + status warning for this case.
+- **p5 sketches** — `millis()`, `deltaTime` and `Date.now()` are made
+  frame-deterministic (`= frameCount * (1000 / playbackFps)`).
+  `performance.now()` is deliberately **left on real wall-clock**, because
+  p5's own `frameRate()` scheduler reads it and freezing it would stall the
+  draw loop. Sketches that read `performance.now()` directly (rare in p5
+  code) can still record fast — use `millis()`/`deltaTime` instead.
+- **Non-p5 sketches** (raw canvas, three.js, …) — driven via a
+  `requestAnimationFrame` loop. Here `performance.now()`, `Date.now()` **and**
+  the rAF timestamp are all virtualised to the same frame-deterministic clock,
+  so time-based motion records at the correct speed. (There's no p5 scheduler
+  to protect in this path.) The only remaining gap is animation timed off
+  `setTimeout`/`setInterval`, which are left alone.
 
-Because capture runs below `playbackFps` (WebCodecs backpressure throttles
-it), any animation driven by one of those untouched wall-clock sources packs
-more motion into each encoded second and **plays back too fast** (≈
-`playbackFps / real-capture-fps`). If you need exact capture timing there,
-drive motion from `millis()`/`deltaTime`/`Date.now()`, or from a frame
-counter you advance once per frame.
+Sketches that animate via `frameCount` directly are unaffected by capture
+speed but will look slowed down on the `master` profile (2 fps render) — see
+above.
 
 ## Lossless master workflow (PNG → MP4)
 

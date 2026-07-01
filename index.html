@@ -730,7 +730,6 @@
 
     let activeCapture = null;
     let activeRunner = null;
-    let lastRunMode = null;   // 'p5' | 'raf' from the runner — drives the non-p5 warning
 
     // Returns { files, mainFile } ready for the iframe runner.
     function resolveProject() {
@@ -776,13 +775,9 @@
         });
 
         let captureStarting = false;
-        activeRunner.on('ready', async ({ canvas, mode: runMode }) => {
+        activeRunner.on('ready', async ({ canvas }) => {
           if (captureStarting || activeCapture) return;
           captureStarting = true;
-          lastRunMode = runMode || null;
-          if (runMode === 'raf') {
-            console.warn('[p5export] non-p5 sketch: capture time is not frame-deterministic; recording may play back fast.');
-          }
           setStatus(`recording ${opts.frames} frames at ${opts.renderFps} fps…`);
           activeCapture = await window.p5export.startCapture({
             canvas, ...opts,
@@ -825,10 +820,6 @@
       btn.textContent = btn.dataset.idle;
       $('stop').disabled = false;
       setStatus(`recording — ${e.detail.frames} frames → ${e.detail.format}`);
-      if (lastRunMode === 'raf') {
-        $('status-witty').textContent =
-          '⚠ non-p5 sketch — capture time isn’t frame-deterministic; recording may play back fast. See About.';
-      }
     });
 
     window.addEventListener('p5export:encoding', () => {

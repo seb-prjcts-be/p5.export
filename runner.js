@@ -24,6 +24,16 @@
       var timePatchInstalled = false;
       var origMillis = null;
 
+      // Frame-deterministic capture clock for the NON-p5 (raf fallback) path.
+      // Advances one playback slot (1000/playbackFps ms) per captured frame,
+      // independent of real render speed. Baselines are anchored at record-start
+      // so a t0 grabbed before recording sees a continuous forward clock.
+      var captureFrame = 0;
+      var clockBaseReal = 0;   // performance.now() baseline
+      var clockBaseDate = 0;   // Date.now() epoch baseline
+      function slotMs() { return 1000 / playbackFps; }
+      function rafClockActive() { return deterministicTime && mode === 'raf'; }
+
       // Assets map (path -> blob URL) is set by the bundle script that runs
       // right before this bridge. Used to resolve runtime loadImage/loadJSON
       // calls which otherwise would hit the iframe's blob-URL base and miss.
@@ -66,6 +76,53 @@
           return origOpen.apply(this, [method, resolved].concat(rest));
         };
       }
+
+      // Wall-clock override for the NON-p5 (raf) path. A raw-canvas / three.js
+      // renderer animates straight off performance.now() / Date.now() / the rAF
+      // timestamp, while the encoder lays frames at a fixed playbackFps cadence —
+      // so without help the motion runs at the (backpressure-throttled) real
+      // capture rate and the file plays back too fast. While capturing in raf
+      // mode we hand the sketch a frame-deterministic clock instead: encoded
+      // time == animation time, regardless of real render speed.
+      //
+      // performance.now() and the rAF timestamp are scoped to raf mode ON
+      // PURPOSE: in p5 mode, p5's own draw-loop throttle reads performance.now()
+      // to pace frameRate(), so freezing it there would deadlock a capped
+      // profile like master. p5 sketches get determinism via the
+      // millis()/deltaTime patch in patchTime() instead.
+      var origPerfNow =
+        (window.performance && typeof window.performance.now === 'function')
+          ? window.performance.now.bind(window.performance)
+          : null;
+      var origDateNow = Date.now;
+      var origRAF =
+        typeof window.requestAnimationFrame === 'function'
+          ? window.requestAnimationFrame.bind(window)
+          : null;
+      if (origPerfNow) {
+        window.performance.now = function () {
+          return rafClockActive() ? clockBaseReal + captureFrame * slotMs() : origPerfNow();
+        };
+      }
+      if (origRAF) {
+        window.requestAnimationFrame = function (cb) {
+          return origRAF(function (realTs) {
+            cb(rafClockActive() ? clockBaseReal + captureFrame * slotMs() : realTs);
+          });
+        };
+      }
+      // Date.now() is made deterministic in BOTH modes so sketches that read
+      // wall-clock time are covered whether they run through p5 or the raf
+      // fallback. Real epoch baseline keeps absolute timestamps sane; only the
+      // per-frame ADVANCE is virtualised. In raf mode it tracks the capture
+      // frame counter; in p5 mode it tracks the p5 instance's frameCount.
+      Date.now = function () {
+        if (!deterministicTime) return origDateNow();
+        if (mode === 'raf') return clockBaseDate + captureFrame * slotMs();
+        var fc = (typeof p5 !== 'undefined' && p5.instance &&
+                  p5.instance.frameCount) || 0;
+        return clockBaseDate + fc * slotMs();
+      };
 
       // Patch p5's loader methods so the first argument (path) is resolved
       // through the assets map before the original loader runs.
@@ -130,28 +187,9 @@
           }
           return origMillis.call(this);
         };
-        // Also make Date.now() frame-deterministic while recording, for the
-        // (rarer) sketches that read t = Date.now() instead of millis(). Keep
-        // the real epoch baseline so absolute timestamps stay sane and only the
-        // per-frame ADVANCE becomes deterministic. NOT done for
-        // performance.now(): p5's own frameRate() scheduler reads it, so
-        // freezing it would stall the draw loop. Non-p5 sketches (raf mode)
-        // are unaffected by this and may still record fast — see README.
-        if (typeof Date !== 'undefined' && typeof Date.now === 'function' &&
-            !Date.now.__p5exportWrapped) {
-          var origDateNow = Date.now;
-          var dateBaseline = origDateNow();
-          var patchedNow = function () {
-            if (deterministicTime) {
-              var fc = (typeof p5 !== 'undefined' && p5.instance &&
-                        p5.instance.frameCount) || 0;
-              return dateBaseline + fc * (1000 / playbackFps);
-            }
-            return origDateNow();
-          };
-          patchedNow.__p5exportWrapped = true;
-          Date.now = patchedNow;
-        }
+        // Date.now() and performance.now() are handled by the global overrides
+        // installed above (deterministic in both / raf mode respectively), so
+        // patchTime() only needs to cover p5's millis() and deltaTime.
         if (typeof p5.prototype.registerMethod === 'function') {
           p5.prototype.registerMethod('pre', function () {
             if (deterministicTime) {
@@ -166,6 +204,11 @@
         if (e.data.type === 'p5export:config') {
           pendingFps = e.data.renderFps;
           if (e.data.playbackFps) playbackFps = e.data.playbackFps;
+          // Anchor the virtual clock to real time at record-start so a sketch
+          // that grabbed a t0 before recording sees a continuous forward clock.
+          captureFrame = 0;
+          clockBaseReal = origPerfNow ? origPerfNow() : 0;
+          clockBaseDate = origDateNow();
           deterministicTime = true;
           patchTime();
           // Only cap draw() rate when caller explicitly asked for it
@@ -191,7 +234,7 @@
           type: 'p5export:ready',
           width: c.width,
           height: c.height,
-          mode: mode,            // 'p5' | 'raf' — lets the parent warn on non-p5
+          mode: mode,            // 'p5' | 'raf' — informational (both are deterministic)
         }, '*');
         return true;
       }
@@ -245,10 +288,18 @@
         var loop = function () {
           if (mode !== 'raf') return;
           sendReady();
-          if (readySent) parent.postMessage({ type: 'p5export:postdraw' }, '*');
-          requestAnimationFrame(loop);
+          if (readySent) {
+            parent.postMessage({ type: 'p5export:postdraw' }, '*');
+            // Advance the virtual clock one slot per captured frame so the
+            // sketch's next draw reads deterministic, frame-aligned time.
+            if (deterministicTime) captureFrame++;
+          }
+          // Use the un-virtualised rAF for the driver loop's own scheduling so
+          // it keeps ticking on real frames (the wrapper only virtualises the
+          // timestamp handed to callbacks, which this loop ignores).
+          (origRAF || requestAnimationFrame)(loop);
         };
-        requestAnimationFrame(loop);
+        (origRAF || requestAnimationFrame)(loop);
       }, 1200);
 
       window.addEventListener('error', function (e) {
