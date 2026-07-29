@@ -782,6 +782,15 @@
           activeCapture = await window.p5export.startCapture({
             canvas, ...opts,
           });
+          // The encoded frame can differ from the canvas: H.264 needs even
+          // dimensions, and an oversized (e.g. Retina) canvas is divided down.
+          // Say so rather than let the file size look like a mystery.
+          const c = activeCapture && activeCapture.config;
+          if (c && (c.width !== canvas.width || c.height !== canvas.height)) {
+            setStatus(
+              `recording at ${c.width}×${c.height} · canvas ${canvas.width}×${canvas.height}`,
+            );
+          }
         });
 
         activeRunner.on('postdraw', () => {
@@ -836,7 +845,12 @@
 
     window.addEventListener('p5export:done', () => resetRecordUI(true));
     window.addEventListener('p5export:aborted', () => resetRecordUI(true));
-    window.addEventListener('p5export:error', () => resetRecordUI(false));
+    window.addEventListener('p5export:error', (e) => {
+      resetRecordUI(false);
+      // p5export carries an actionable sentence on every failure path (missing
+      // WebCodecs, a refused resolution). Showing it beats a silent reset.
+      setStatus((e.detail && e.detail.message) || 'recording failed', 'error');
+    });
 
     window.addEventListener('p5export:progress', (e) => {
       const { frame, total } = e.detail;

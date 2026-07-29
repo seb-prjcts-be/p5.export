@@ -11,6 +11,11 @@
 // such canvases into a parent-realm canvas via drawImage on every tick so
 // encoders and toBlob() always get a native canvas.
 //
+// The same mirror also normalises the frame size (see `planSize`): H.264
+// refuses odd dimensions, and a Retina canvas is twice the size of the same
+// sketch on a 1x display. Both are decided once, at capture start, and then
+// held fixed for the whole recording.
+//
 // API and three-profile shape (social/master/edit) inspired by
 // p5.capture (MIT, © tapioca24). See CREDITS.md.
 
@@ -42,6 +47,18 @@
     format: 'mp4',
     filename: 'p5export',
     bitrateMbps: 20,
+    // Longest edge of the encoded video, in pixels. 0 disables the cap, and it
+    // never applies to a PNG sequence.
+    // A Retina display (devicePixelRatio 2) doubles the canvas, so the encoder
+    // gets four times the pixels per frame and the same bitrate has to stretch
+    // over all of them. This bounds what the encoder ever sees.
+    //
+    // It is a ceiling, not a normaliser: below the cap each machine still
+    // exports at its own canvas size, so a Retina Mac and a 1x PC do not
+    // produce identical files. The render cost inside p5 is untouched too —
+    // the sketch still draws at full device resolution either way. See
+    // `planSize` for why the cap only ever divides by a whole number.
+    maxSize: 1920,
   };
 
   function resolve(opts) {
@@ -53,6 +70,14 @@
     root.dispatchEvent(new CustomEvent(`p5export:${name}`, { detail }));
   }
 
+  // Every failure path carries a sentence the UI can show as-is. A bare
+  // "Failed" is unactionable, and the reasons that actually bite here
+  // (missing WebCodecs, a refused resolution) are all fixable by the user.
+  function errorText(err) {
+    if (!err) return 'Unknown error.';
+    return err.message || String(err);
+  }
+
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -61,41 +86,148 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // Safari can still be writing a multi-megabyte blob to disk long after the
+    // click returns; revoking too early truncates or cancels the download.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  // Encoded dimensions, decided once at capture start and then frozen.
+  //
+  //  - H.264 rejects odd width or height outright, and the canvas size is
+  //    whatever the layout happened to produce times pixelDensity — so on a
+  //    1x display it is an odd number about half the time.
+  //  - `maxSize` caps the longest edge so a Retina canvas doesn't silently
+  //    export at double resolution.
+  //
+  // Freezing matters: an encoder locks its frame size on the first frame, so a
+  // mid-capture window resize must not change what we hand it.
+  function planSize(srcW, srcH, cfg) {
+    let w = Math.max(1, srcW || 1);
+    let h = Math.max(1, srcH || 1);
+
+    // Both rules exist for the video encoder, so a PNG sequence — the lossless
+    // master — is always written at full canvas resolution.
+    if (cfg.format !== 'mp4') return { width: w, height: h };
+
+    // Downscale only by whole divisors. An arbitrary fraction (2200 -> 1920)
+    // resamples 1px strokes and grid lines into grey mush; dividing by exactly
+    // 2 folds four device pixels into one, which is supersampling — a Retina
+    // canvas halved is sharper than the same size rendered at 1x. The cost is
+    // a step in output size rather than a smooth ramp.
+    if (cfg.maxSize > 0) {
+      let divisor = 1;
+      while (Math.max(w, h) / divisor > cfg.maxSize) divisor++;
+      w = Math.round(w / divisor);
+      h = Math.round(h / divisor);
+    }
+    w = Math.max(2, w - (w % 2));
+    h = Math.max(2, h - (h % 2));
+    return { width: w, height: h };
   }
 
   // A canvas from another realm (iframe) is not `instanceof` our
-  // HTMLCanvasElement. Wrap it with a parent-realm mirror that we redraw
-  // into on every frame.
-  function wrapCanvas(srcCanvas) {
+  // HTMLCanvasElement, and a canvas whose size we had to correct can't be
+  // encoded directly either. Both cases get a parent-realm mirror at the
+  // planned size that we redraw into on every frame.
+  function wrapCanvas(srcCanvas, cfg) {
+    const plan = planSize(srcCanvas.width, srcCanvas.height, cfg);
     const sameRealm = srcCanvas instanceof HTMLCanvasElement;
-    if (sameRealm) {
+    const exactSize =
+      plan.width === srcCanvas.width && plan.height === srcCanvas.height;
+
+    if (sameRealm && exactSize) {
       return {
         canvas: srcCanvas,
         sync: () => {},
         width: () => srcCanvas.width,
         height: () => srcCanvas.height,
+        rescaled: false,
       };
     }
+
     const mirror = document.createElement('canvas');
-    mirror.width = srcCanvas.width;
-    mirror.height = srcCanvas.height;
-    const ctx = mirror.getContext('2d', { willReadFrequently: true });
+    mirror.width = plan.width;
+    mirror.height = plan.height;
+    // willReadFrequently pins the canvas to a CPU backing store, which is what
+    // the PNG sink wants (it calls toBlob on every frame) but the opposite of
+    // what the video encoder wants — there the mirror is only ever a drawImage
+    // target, and forcing it off the GPU makes each blit ~12x slower.
+    const ctx = mirror.getContext('2d', {
+      willReadFrequently: cfg.format !== 'mp4',
+    });
+    // The mirror only ever shrinks the source, and the whole point of the
+    // whole-divisor rule is to make that shrink clean.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
     return {
       canvas: mirror,
       sync: () => {
-        if (mirror.width !== srcCanvas.width) mirror.width = srcCanvas.width;
-        if (mirror.height !== srcCanvas.height) mirror.height = srcCanvas.height;
-        ctx.drawImage(srcCanvas, 0, 0);
+        const sw = srcCanvas.width;
+        const sh = srcCanvas.height;
+        if (!sw || !sh) return;
+        // Fit the source inside the frozen frame. Normally the aspect ratios
+        // match and this fills it exactly; after a mid-capture resize it
+        // letterboxes instead of distorting the sketch.
+        const scale = Math.min(mirror.width / sw, mirror.height / sh);
+        const dw = sw * scale;
+        const dh = sh * scale;
+        const dx = (mirror.width - dw) / 2;
+        const dy = (mirror.height - dh) / 2;
+        if (dw < mirror.width || dh < mirror.height) {
+          ctx.clearRect(0, 0, mirror.width, mirror.height);
+        }
+        ctx.drawImage(srcCanvas, 0, 0, sw, sh, dx, dy, dw, dh);
       },
       width: () => mirror.width,
       height: () => mirror.height,
+      rescaled: !exactSize,
     };
   }
 
+  // Fail loudly and specifically *before* recording starts. Without this the
+  // first encoded frame throws deep inside the encoder and the user sees a
+  // bare "Failed" with the real reason buried in the console.
+  async function assertMp4Support(wrapped, cfg) {
+    const w = wrapped.width();
+    const h = wrapped.height();
+
+    if (typeof VideoEncoder === 'undefined') {
+      throw new Error(
+        'This browser cannot encode MP4: the WebCodecs VideoEncoder API is missing. ' +
+          'MP4 export needs Chrome/Edge 94+ or Safari 16.4+' +
+          (root.isSecureContext === false
+            ? ', and this page is not a secure context — open it over https or localhost, not file://.'
+            : '.'),
+      );
+    }
+
+    const { canEncodeVideo } = await loadMediabunny();
+    if (typeof canEncodeVideo !== 'function') return;
+
+    const ok = await canEncodeVideo('avc', {
+      width: w,
+      height: h,
+      bitrate: cfg.bitrateMbps * 1e6,
+    });
+    if (!ok) {
+      throw new Error(
+        `This browser refused to encode H.264 at ${w}×${h}. ` +
+          'Try a smaller window, or record in another browser.',
+      );
+    }
+  }
+
   async function createMp4Sink(wrapped, cfg) {
+    await assertMp4Support(wrapped, cfg);
+
     const { Output, Mp4OutputFormat, BufferTarget, CanvasSource } =
       await loadMediabunny();
+
+    // The mirror only holds the previous frame until sync() runs, and
+    // CanvasSource locks its frame size off the canvas it is handed — so make
+    // sure it sees the planned size with real content in it from the start.
+    wrapped.sync();
 
     const video = new CanvasSource(wrapped.canvas, {
       codec: 'avc',
@@ -190,11 +322,15 @@
     const canvas = opts.canvas;
 
     if (!canvas) {
-      console.error('[p5export] canvas is required');
+      const err = new Error('No canvas to record.');
+      console.error('[p5export]', err.message);
+      fire('error', { error: err, message: errorText(err), phase: 'init' });
       return null;
     }
 
-    const wrapped = wrapCanvas(canvas);
+    const wrapped = wrapCanvas(canvas, cfg);
+    cfg.width = wrapped.width();
+    cfg.height = wrapped.height();
 
     let sink;
     try {
@@ -204,7 +340,7 @@
           : createPngSink(wrapped, cfg);
     } catch (err) {
       console.error('[p5export] init failed:', err);
-      fire('error', { error: err });
+      fire('error', { error: err, message: errorText(err), phase: 'init' });
       return null;
     }
 
@@ -244,7 +380,7 @@
         }
       } catch (err) {
         console.error('[p5export] finalize failed:', err);
-        fire('error', { error: err });
+        fire('error', { error: err, message: errorText(err), phase: 'finalize' });
       } finally {
         clearInterval(pulse);
       }
@@ -276,7 +412,7 @@
           if (frameIdx >= cfg.frames) await finish();
         } catch (err) {
           console.error('[p5export] frame capture failed:', err);
-          fire('error', { error: err });
+          fire('error', { error: err, message: errorText(err), phase: 'frame' });
           await abort();
         }
       });
