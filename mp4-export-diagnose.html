@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>p5.export — MP4-export diagnose</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
+  h1 { font-size: 1.2rem; }
+  table { border-collapse: collapse; width: 100%; margin: .5rem 0 1.5rem; }
+  th, td { border: 1px solid #ccc; padding: .3rem .5rem; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; width: 16rem; }
+  .ok   { color: #0a7a2f; font-weight: bold; }
+  .bad  { color: #c00; font-weight: bold; }
+  .warn { color: #b36b00; font-weight: bold; }
+  #out { white-space: pre-wrap; }
+  button { font: inherit; padding: .4rem .8rem; }
+  canvas { border: 1px solid #ccc; }
+</style>
+</head>
+<body>
+
+<h1>p5.export — MP4-export diagnose</h1>
+<p>Open deze pagina <strong>op de Mac, in dezelfde browser waar Record faalt</strong>, en op
+dezelfde URL/host als de tool (https of http://localhost — niet via <code>file://</code>).
+Klik op <em>Start diagnose</em> en stuur de volledige uitvoer terug.</p>
+
+<p>
+  Canvasformaat om te testen (neem het formaat over dat de tool bij jou gebruikt —
+  zie regel <em>Canvas (geschat)</em> hieronder):
+  <input id="w" type="number" value="0" style="width:6rem"> ×
+  <input id="h" type="number" value="0" style="width:6rem">
+</p>
+<p>
+  <button id="run">Start diagnose</button>
+  <button id="dl" hidden>Test-MP4 downloaden</button>
+</p>
+
+<h2>Omgeving</h2>
+<table id="env"></table>
+
+<h2>Resultaten</h2>
+<div id="out">Nog niet gedraaid.</div>
+
+<script type="module">
+const MEDIABUNNY_URL = 'https://cdn.jsdelivr.net/npm/mediabunny@1/+esm';
+
+const envTable = document.getElementById('env');
+const out = document.getElementById('out');
+const lines = [];
+
+function log(msg, cls) {
+  lines.push(cls ? `<span class="${cls}">${msg}</span>` : msg);
+  out.innerHTML = lines.join('\n');
+}
+function row(k, v, cls) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<th>${k}</th><td class="${cls || ''}">${v}</td>`;
+  envTable.appendChild(tr);
+}
+
+// ── Omgeving ────────────────────────────────────────────────────────────────
+const dpr = window.devicePixelRatio || 1;
+const density = Math.min(dpr, 2); // exact wat sketch.js doet
+// De stage is ongeveer de viewport minus de panelen; ruwe schatting.
+const cssW = Math.max(400, Math.round((window.innerWidth || 1440) * 0.55));
+const cssH = Math.max(320, Math.round((window.innerHeight || 900) * 0.7));
+const labW = Math.floor(cssW * density);
+const labH = Math.floor(cssH * density);
+
+document.getElementById('w').value = labW;
+document.getElementById('h').value = labH;
+
+row('User agent', navigator.userAgent);
+row('Platform', navigator.platform || '(onbekend)');
+row('devicePixelRatio', dpr, dpr > 1 ? 'warn' : '');
+row('pixelDensity die de tool zet', density);
+row('Secure context', window.isSecureContext,
+    window.isSecureContext ? 'ok' : 'bad');
+row('Origin', location.origin);
+row('VideoEncoder aanwezig', typeof VideoEncoder !== 'undefined',
+    typeof VideoEncoder !== 'undefined' ? 'ok' : 'bad');
+row('VideoFrame aanwezig', typeof VideoFrame !== 'undefined',
+    typeof VideoFrame !== 'undefined' ? 'ok' : 'bad');
+row('Canvas (geschat)', `${labW} × ${labH} px backing (uit ${cssW} × ${cssH} CSS)`,
+    (labW % 2 || labH % 2) ? 'bad' : '');
+row('Breedte/hoogte even?',
+    (labW % 2 === 0 && labH % 2 === 0)
+      ? 'ja'
+      : `NEE (w%2=${labW % 2}, h%2=${labH % 2}) → H.264 weigert oneven afmetingen`,
+    (labW % 2 || labH % 2) ? 'bad' : 'ok');
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+const CODECS = [
+  ['avc1.640028', 'High     L4.0  (mediabunny kiest ALTIJD High: avc1.64xx)'],
+  ['avc1.640034', 'High     L5.2'],
+  ['avc1.4D0028', 'Main     L4.0'],
+  ['avc1.42E028', 'Baseline L4.0'],
+];
+
+async function probeCodec(codec, w, h, bitrate) {
+  try {
+    const res = await VideoEncoder.isConfigSupported({
+      codec, width: w, height: h, bitrate, framerate: 60,
+    });
+    return res.supported === true ? 'supported' : 'NIET supported';
+  } catch (err) {
+    return 'throw: ' + err;
+  }
+}
+
+// Echte encode-test: configureert een encoder en duwt er 10 frames doorheen.
+// isConfigSupported() liegt op sommige platforms — dit is de harde test.
+async function realEncodeTest(codec, w, h, bitrate) {
+  return new Promise((resolve) => {
+    let chunks = 0;
+    let enc;
+    const fail = (e) => resolve('FOUT: ' + (e && e.message ? e.message : e));
+    try {
+      enc = new VideoEncoder({
+        output: () => { chunks++; },
+        error: fail,
+      });
+      enc.configure({ codec, width: w, height: h, bitrate, framerate: 60 });
+    } catch (err) { return fail(err); }
+
+    (async () => {
+      try {
+        const data = new Uint8Array(w * h * 4).fill(128);
+        for (let i = 0; i < 10; i++) {
+          const frame = new VideoFrame(data, {
+            format: 'RGBA', codedWidth: w, codedHeight: h,
+            timestamp: i * 16666, duration: 16666,
+          });
+          enc.encode(frame, { keyFrame: i === 0 });
+          frame.close();
+        }
+        await enc.flush();
+        enc.close();
+        resolve(chunks > 0 ? `OK (${chunks} chunks)` : 'FOUT: 0 chunks geproduceerd');
+      } catch (err) { fail(err); }
+    })();
+  });
+}
+
+// Volledige mediabunny-pijplijn op een echt canvas, net als p5export.js.
+async function fullPipelineTest(w, h, bitrateMbps) {
+  const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, canEncodeVideo } =
+    await import(MEDIABUNNY_URL);
+
+  log(`\n— mediabunny geladen —`);
+  if (typeof canEncodeVideo === 'function') {
+    try {
+      const can = await canEncodeVideo('avc', {
+        width: w, height: h, bitrate: bitrateMbps * 1e6,
+      });
+      log(`canEncodeVideo('avc', ${w}×${h}): ${can}`, can ? 'ok' : 'bad');
+      if (!can) {
+        log('  → Dit is dezelfde check die p5export.js nu vóór elke opname doet;', 'warn');
+        log('    in de tool zie je de reden dan onder de Record-knop staan.', 'warn');
+      }
+    } catch (err) {
+      log(`canEncodeVideo wierp: ${err}`, 'bad');
+    }
+  }
+
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+
+  try {
+    const video = new CanvasSource(cv, { codec: 'avc', bitrate: bitrateMbps * 1e6 });
+    const output = new Output({
+      format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+      target: new BufferTarget(),
+    });
+    output.addVideoTrack(video, { frameRate: 60 });
+    await output.start();
+
+    const dt = 1 / 60;
+    for (let i = 0; i < 30; i++) {
+      ctx.fillStyle = `hsl(${i * 12} 80% 50%)`;
+      ctx.fillRect(0, 0, w, h);
+      await video.add(i * dt, dt, { keyFrame: i % 60 === 0 });
+    }
+    await output.finalize();
+    const bytes = output.target.buffer.byteLength;
+    log(`Volledige mediabunny-pijplijn ${w}×${h}: OK — ${bytes} bytes MP4`, 'ok');
+    return new Blob([output.target.buffer], { type: 'video/mp4' });
+  } catch (err) {
+    log(`Volledige mediabunny-pijplijn ${w}×${h}: FOUT — ${err && err.stack || err}`, 'bad');
+    return null;
+  }
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  lines.length = 0;
+  const w = parseInt(document.getElementById('w').value, 10);
+  const h = parseInt(document.getElementById('h').value, 10);
+
+  if (typeof VideoEncoder === 'undefined') {
+    log('VideoEncoder ontbreekt volledig → MP4-export kan hier NOOIT werken.', 'bad');
+    log('Oorzaak: browser te oud (mediabunny vraagt Safari 16.4+ / Chrome 94+),');
+    log('of geen secure context (http op een niet-localhost host, of file://).');
+    return;
+  }
+
+  const sizes = [
+    [w, h, `canvasformaat zoals ingevuld`],
+    [w - (w % 2), h - (h % 2), `zelfde, afgerond naar EVEN`],
+    [1280, 720, `720p referentie`],
+    [1920, 1080, `1080p referentie`],
+    [2560, 1600, `Retina-schaal (2× een grote stage)`],
+    [3840, 2160, `4K — grens van de macOS-hardware-encoder`],
+  ];
+
+  log('=== isConfigSupported() per codec/formaat ===');
+  log('(De vaste L4.0/L5.2-strings hieronder zijn probes. mediabunny kiest zelf een');
+  log(' level bij het formaat, dus "L4.0 NIET supported" op grote maten is normaal —');
+  log(' wat telt is de volledige-pijplijntest onderaan.)');
+  for (const [tw, th, label] of sizes) {
+    log(`\n[${tw}×${th}] ${label}`);
+    for (const [codec, desc] of CODECS) {
+      const r = await probeCodec(codec, tw, th, 3.5e6);
+      log(`  ${codec}  ${desc}\n      → ${r}`,
+          r === 'supported' ? 'ok' : 'bad');
+    }
+  }
+
+  log('\n=== echte encode-test (10 frames) ===');
+  for (const [tw, th, label] of sizes) {
+    const r = await realEncodeTest('avc1.640028', tw, th, 3.5e6);
+    log(`  [${tw}×${th}] ${label} → ${r}`, r.startsWith('OK') ? 'ok' : 'bad');
+  }
+
+  log('\n=== volledige mediabunny-pijplijn (zoals p5export.js) ===');
+  let blob = await fullPipelineTest(w, h, 3.5);
+  if (!blob) {
+    const ew = w - (w % 2), eh = h - (h % 2);
+    if (ew !== w || eh !== h) {
+      log(`\nOpnieuw met EVEN afmetingen ${ew}×${eh}:`);
+      blob = await fullPipelineTest(ew, eh, 3.5);
+    }
+  }
+  if (!blob) {
+    log(`\nOpnieuw op 1280×720:`);
+    blob = await fullPipelineTest(1280, 720, 3.5);
+  }
+
+  // Retina-schaal: op een Mac is het canvas 2× zo groot als op een 1×-scherm.
+  log(`\nRetina-schaal apart (2560×1600), 20 Mbps zoals het 'edit'-profiel:`);
+  await fullPipelineTest(2560, 1600, 20);
+
+  log('\n=== klaar ===');
+
+  if (blob) {
+    document.getElementById('dl').hidden = false;
+    document.getElementById('dl').onclick = () => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'diagnose.mp4';
+      document.body.appendChild(a); a.click(); a.remove();
+      log('\nDownload aangeroepen. Kwam er een bestand binnen, en speelt het af?',
+          'warn');
+      log('(Safari blokkeert programmatische blob-downloads soms stil — dan is de', 'warn');
+      log(' encoder in orde en zit de fout in de opslagstap.)', 'warn');
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    };
+  }
+});
+</script>
+</body>
+</html>
