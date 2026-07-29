@@ -608,7 +608,7 @@
 
     let lastPreviewURL = null;
 
-    function setPreviewLink(label, href) {
+    function setPreviewLink(label, href, downloadName) {
       if (lastPreviewURL) URL.revokeObjectURL(lastPreviewURL);
       lastPreviewURL = href;
       const main = $('status-main');
@@ -618,6 +618,9 @@
       a.href = href;
       a.target = '_blank';
       a.rel = 'noopener';
+      // With `download` set the browser saves the file instead of opening
+      // the blob in a tab.
+      if (downloadName) a.download = downloadName;
       a.className = 'status-link';
       a.textContent = label;
       main.append(prefix, a);
@@ -652,10 +655,11 @@
           setPreviewLink(
             `${handle.name}/${saved.subfolder}/${saved.filename}`,
             previewURL,
+            fname,
           );
           $('status-witty').textContent = usingProject
-            ? 'saved next to your project.'
-            : 'click to open it in a new tab.';
+            ? 'saved next to your project — click to download a copy.'
+            : 'saved — click to download a copy.';
         } else {
           const a = document.createElement('a');
           a.href = previewURL;
