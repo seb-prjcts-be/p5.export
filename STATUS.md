@@ -8,10 +8,9 @@
   reset. Nieuw: `mp4-export-diagnose.html` om het encoder-pad op een andere machine te meten.
 
 ## Blokkades
-- **Wacht op Seb:** `main` in dit repo is beveiligd (PR + groene `validate`-check vereist,
-  zie docs/BRANCH_PROTECTION.md), dus direct pushen naar main kan niet. De commit staat op
-  branch `claude/mp4-export-hardening` en is gepusht. Er is nog **geen PR geopend** — zeg
-  of dat mag.
+- **Wacht op Seb:** PR #5 (`claude/mp4-export-hardening` → `main`) staat open, `validate` is
+  groen, mergeable. Alleen jij kunt mergen — `main` is beveiligd (PR + groene check vereist,
+  zie docs/BRANCH_PROTECTION.md). https://github.com/seb-prjcts-be/p5.export/pull/5
 
 ## Volgende stap
 - Wijziging in worktree `jolly-clarke-91c342` (branch `claude/repo-update-check-696dbe`) nakijken en beslissen: committen/mergen naar main? Wijziging: status-link na mp4-export downloadt nu het bestand bij klikken (voorheen enkel blob-preview in nieuw tabblad). Let op: die worktree raakt óók `index.html`, maar een ander stuk (`setPreviewLink`) dan mijn wijziging hier (record-handler + error-listener).
