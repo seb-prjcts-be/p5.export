@@ -16,3 +16,15 @@ Thumbs.db
 
 # Node (in case someone adds tooling later)
 node_modules/
+
+# Local-only notes and dashboard metadata (kept on disk, not in the repo).
+# Mirrors the same list in the p5.waves_lab repo. AGENTS.md is the working
+# agreement and carries personal context — it must stay out of a public repo.
+/AGENTS.md
+/AI_RULES.md
+/project.json
+/site.json
+/structure.json
+/docs/ai-log.md
+/docs/decisions.md
+/docs/inbox.md
