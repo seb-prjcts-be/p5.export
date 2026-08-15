@@ -320,7 +320,6 @@ p5.export/
 ├── storage.js      File System Access helpers
 ├── style.css       prjcts huisstijl
 ├── CREDITS.md
-├── CLAUDE.md
 └── README.md
 ```
 
